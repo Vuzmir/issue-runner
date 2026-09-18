@@ -15,6 +15,13 @@ inputs:
     description: 'Which Claude model works the issue.'
     required: false
     default: 'sonnet'
+  version:
+    description: >-
+      Which Claude Code to run: a release channel (stable, latest) or an exact version. The
+      CLI is downloaded, checksum-verified and cached per runner, so nothing has to be
+      installed on the machine beforehand.
+    required: false
+    default: 'stable'
   claude-token:
     description: >-
       A Claude Code OAuth token, from `claude setup-token`. Leave empty only if the step

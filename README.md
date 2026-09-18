@@ -93,6 +93,19 @@ separate action on purpose: the loop decides *whether* there is work, this decid
 it*, and nothing in the loop imports it. Adopting the queue with a different worker means
 not using this action, rather than working around it.
 
+**Nothing has to be installed on the runner.** The action downloads the CLI itself, verifies
+it against the SHA-256 in Anthropic's release manifest, and caches it per version in the
+runner's tool cache - a first run costs the download, every run after it costs nothing. The
+`version` input takes a channel (`stable`, the default, or `latest`) or an exact version to
+pin.
+
+That is worth doing rather than asking for a preinstalled binary, because a self-hosted
+runner's service usually runs as an account nobody logs into: it sees only the machine PATH
+and cannot read another user's home, so the ordinary per-user install is invisible to it. The
+official installers are a shell script and a PowerShell script, neither of which an action
+that refuses to assume a shell can use - but what they do is a version lookup, a manifest and
+a download, and that is all this does.
+
 Two of its inputs deserve a word:
 
 - **`github-token` is required and does not fall back to `github.token`.** Many repositories
@@ -103,10 +116,8 @@ Two of its inputs deserve a word:
 - **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
   environment already carries `ANTHROPIC_API_KEY`.
 
-The runner needs `claude` on the PATH of the account its service runs as - usually not the
-account that installed it, since the default installer is per-user. Commits are authored as
-`issue-runner <issue-runner@users.noreply.github.com>`: a runner account has no git identity
-of its own, and `git commit` refuses without one.
+Commits are authored as `issue-runner <issue-runner@users.noreply.github.com>`: a runner
+account has no git identity of its own, and `git commit` refuses without one.
 
 ## The state machine
 
@@ -303,10 +314,10 @@ then handed the worker no procedure would strand that issue.
 
 The engine's decision logic is pure and covered by `src/engine.test.ts` against a fake
 gateway - add a case there before changing how the queue behaves. `src/worker.test.ts`
-covers what the state directory ends up containing, and `src/transcript.test.ts` covers how
-the Claude worker reads the CLI's stream - which is why that reading lives in
-`src/transcript.ts` and not inside `src/claude.ts`, an entry point that runs itself on
-import.
+covers what the state directory ends up containing. `src/transcript.test.ts` and
+`src/install.test.ts` cover the Claude worker's two halves - reading the CLI's stream, and
+choosing what to download - which is why both live outside `src/claude.ts`, an entry point
+that runs itself on import.
 
 ## Releasing
 

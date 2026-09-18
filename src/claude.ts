@@ -17,6 +17,7 @@ import * as path from 'node:path';
 
 import * as core from '@actions/core';
 
+import { install } from './install.js';
 import { lineReader, readLine } from './transcript.js';
 
 /** A runner account has no git identity of its own, and `git commit` refuses without one. */
@@ -48,6 +49,10 @@ async function run(): Promise<void> {
   if (claudeToken === '' && (process.env['ANTHROPIC_API_KEY'] ?? '') === '') {
     throw new Error('Set claude-token, or ANTHROPIC_API_KEY in the step environment; the CLI cannot authenticate.');
   }
+
+  // Before the prompt is built, so a runner that cannot reach the download service says so
+  // rather than after a claim has already been announced.
+  const executable = await install(core.getInput('version', { required: true }));
 
   core.notice(`Working #${issue} (${task}) with Claude ${model}`);
 
@@ -85,7 +90,14 @@ async function run(): Promise<void> {
   };
   if (claudeToken !== '') env['CLAUDE_CODE_OAUTH_TOKEN'] = claudeToken;
 
-  const worker = spawn('claude', args, { cwd: process.env['GITHUB_WORKSPACE'], env, windowsHide: true });
+  const worker = spawn(executable, args, {
+    cwd: process.env['GITHUB_WORKSPACE'],
+    env,
+    windowsHide: true,
+    // Nothing is ever going to write to the worker's stdin. Saying so costs nothing; leaving
+    // it an open pipe makes the CLI wait several seconds for input that cannot arrive.
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   worker.stdout.setEncoding('utf8');
   worker.stdout.on(
@@ -99,14 +111,7 @@ async function run(): Promise<void> {
 
   const code = await new Promise<number | null>((resolve, reject) => {
     worker.on('error', (error: NodeJS.ErrnoException) =>
-      reject(
-        error.code === 'ENOENT'
-          ? new Error(
-              "No `claude` executable on this runner's PATH. It has to be one the runner account can" +
-                ' execute directly: a wrapper script that only a shell can launch is not spawnable here.',
-            )
-          : error,
-      ),
+      reject(new Error(`Could not start ${executable}: ${error.message}`)),
     );
     worker.on('close', resolve);
   });

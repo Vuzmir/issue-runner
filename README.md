@@ -68,6 +68,46 @@ jobs:
 The work step stays in your workflow rather than inside the action. That is deliberate: it
 is what keeps the runner indifferent to what the worker actually is.
 
+## A ready-made worker
+
+If the worker you want is Claude Code, the second action in this repository is that step
+already written:
+
+```yaml
+      - name: Work on the issue
+        if: steps.plan.outputs.decision == 'claimed'
+        timeout-minutes: 60
+        uses: yvz-dmr/issue-runner/worker@v1
+        with:
+          state-dir: ${{ steps.plan.outputs.state-dir }}
+          issue: ${{ steps.plan.outputs.issue }}
+          task: ${{ steps.plan.outputs.task }}
+          model: sonnet
+          claude-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github-token: ${{ secrets.ISSUE_RUNNER_TOKEN }}
+```
+
+It runs `claude --print` on the one-line prompt further down, summarises the session to a
+line per tool call, and hands the outcome back through the same state directory. It is a
+separate action on purpose: the loop decides *whether* there is work, this decides *who does
+it*, and nothing in the loop imports it. Adopting the queue with a different worker means
+not using this action, rather than working around it.
+
+Two of its inputs deserve a word:
+
+- **`github-token` is required and does not fall back to `github.token`.** Many repositories
+  forbid Actions from opening pull requests outright, and one opened by `GITHUB_TOKEN` starts
+  no workflows at all - so its checks would never run, and the loop would sit at `merging`
+  waiting for a signal that cannot arrive. Give it a token belonging to a person or an app,
+  and give the same token to `actions/checkout`, which is what leaves push credentials behind.
+- **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
+  environment already carries `ANTHROPIC_API_KEY`.
+
+The runner needs `claude` on the PATH of the account its service runs as - usually not the
+account that installed it, since the default installer is per-user. Commits are authored as
+`issue-runner <issue-runner@users.noreply.github.com>`: a runner account has no git identity
+of its own, and `git commit` refuses without one.
+
 ## The state machine
 
 Every issue the runner cares about carries exactly one `status:` label. Issues with no
@@ -244,19 +284,29 @@ npm ci
 npm run all          # typecheck + tests + bundle
 ```
 
-`dist/index.js` is the bundle the runner executes and **must be committed**; the runner
-never installs dependencies. Rebuild it in the same commit as any source change. The stock
-Node `.gitignore` excludes `dist` - the un-ignore at the bottom of `.gitignore` is what keeps
-this action working, so do not remove it.
+There are two actions here, one bundle each, and **both bundles must be committed** - the
+runner executes them and never installs dependencies, so rebuild in the same commit as any
+source change:
+
+| action                          | manifest           | entry point  | bundle            |
+| ------------------------------- | ------------------ | ------------ | ----------------- |
+| `yvz-dmr/issue-runner`          | `action.yml`       | `src/main.ts`   | `dist/index.js`   |
+| `yvz-dmr/issue-runner/worker`   | `worker/action.yml`| `src/claude.ts` | `worker/index.js` |
+
+The stock Node `.gitignore` excludes `dist` - the un-ignore at the bottom of `.gitignore` is
+what keeps the first one working, so do not remove it.
 
 `worker/PROTOCOL.md` is read from disk at run time rather than bundled, so editing it needs
-no rebuild. It does have to travel with `dist/`, which is why the action resolves it relative
+no rebuild. It does have to travel with `dist/`, which is why the loop resolves it relative
 to itself and fails the claim outright if it is missing: an action that locked an issue and
 then handed the worker no procedure would strand that issue.
 
 The engine's decision logic is pure and covered by `src/engine.test.ts` against a fake
 gateway - add a case there before changing how the queue behaves. `src/worker.test.ts`
-covers what the state directory ends up containing.
+covers what the state directory ends up containing, and `src/transcript.test.ts` covers how
+the Claude worker reads the CLI's stream - which is why that reading lives in
+`src/transcript.ts` and not inside `src/claude.ts`, an entry point that runs itself on
+import.
 
 ## Releasing
 

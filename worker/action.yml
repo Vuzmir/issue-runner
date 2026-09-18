@@ -1,0 +1,34 @@
+name: 'Issue Runner - Claude worker'
+description: 'Runs the Claude CLI against an issue the runner claimed, following the protocol left beside it.'
+
+inputs:
+  state-dir:
+    description: 'The claim step''s state-dir output. The protocol, the issue and the task are read from it.'
+    required: true
+  issue:
+    description: 'The claimed issue number, for the log.'
+    required: true
+  task:
+    description: 'implement | fix-checks | address-review, as the claim step reported it.'
+    required: true
+  model:
+    description: 'Which Claude model works the issue.'
+    required: false
+    default: 'sonnet'
+  claude-token:
+    description: >-
+      A Claude Code OAuth token, from `claude setup-token`. Leave empty only if the step
+      environment already carries ANTHROPIC_API_KEY.
+    required: false
+    default: ''
+  github-token:
+    description: >-
+      Token the worker pushes and opens the pull request with. Deliberately not defaulted to
+      github.token: many repositories forbid Actions from opening pull requests, and one
+      opened by GITHUB_TOKEN starts no workflows - so its checks would never run, and the
+      loop would wait on them forever.
+    required: true
+
+runs:
+  using: 'node24'
+  main: 'index.js'

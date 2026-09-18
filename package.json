@@ -1,0 +1,22 @@
+{
+  "name": "issue-runner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Issue queue engine, packaged as a local GitHub Action.",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --legal-comments=none",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "all": "npm run typecheck && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -141,3 +141,9 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# --- issue-runner ---
+# The stock template above ignores `dist`, but this is a JavaScript action: the runner
+# executes dist/index.js and never installs dependencies, so the bundle has to be committed.
+!dist/
+!dist/index.js

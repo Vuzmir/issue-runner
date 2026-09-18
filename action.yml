@@ -1,0 +1,66 @@
+name: 'Issue Runner'
+description: 'Walks the issue queue one issue at a time using status:* labels as the lock.'
+
+inputs:
+  mode:
+    description: 'claim (pick and lock the next issue) or release (hand it back)'
+    required: true
+    default: 'claim'
+  token:
+    description: 'Token used for the GitHub API. Needs issues:write and actions:read.'
+    required: false
+    default: ${{ github.token }}
+  label-prefix:
+    description: 'Prefix for the state labels.'
+    required: false
+    default: 'status:'
+  stale-lock-minutes:
+    description: 'How long a lock with no identifiable run may be held before it is reclaimed.'
+    required: false
+    default: '120'
+  max-fix-attempts:
+    description: 'How many times the runner may hand a red pull request back for a fix before parking it.'
+    required: false
+    default: '3'
+  follow-reviews:
+    description: 'Whether unanswered human comments on an open pull request are treated as work.'
+    required: false
+    default: 'true'
+  dry-run:
+    description: 'Decide and report, but do not write anything back to GitHub.'
+    required: false
+    default: 'false'
+  force-issue:
+    description: 'claim only: take this issue instead of the next queued one.'
+    required: false
+    default: ''
+  issue:
+    description: 'release only: the issue to release.'
+    required: false
+    default: ''
+  job-status:
+    description: 'release only: the calling job status (success | failure | cancelled).'
+    required: false
+    default: ''
+  state-dir:
+    description: 'Directory the worker exchanges files through. Defaults to $RUNNER_TEMP/issue-runner.'
+    required: false
+    default: ''
+
+outputs:
+  decision:
+    description: 'claim only: busy | idle | claimed'
+  issue:
+    description: 'claim only: the claimed issue number, empty unless decision is claimed'
+  title:
+    description: 'claim only: the claimed issue title'
+  task:
+    description: 'claim only: implement | fix-checks | address-review'
+  pull:
+    description: 'claim only: the pull request being worked on, empty for a fresh issue'
+  state-dir:
+    description: 'The directory the worker reads PROTOCOL.md, issue.json and task from, and writes next-status to'
+
+runs:
+  using: 'node24'
+  main: 'dist/index.js'

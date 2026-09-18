@@ -20,6 +20,8 @@ import { pipeline } from 'node:stream/promises';
 import * as core from '@actions/core';
 import * as tc from '@actions/tool-cache';
 
+import { getText } from './http.js';
+
 const RELEASES = 'https://downloads.claude.ai/claude-code-releases';
 const TOOL = 'claude-code';
 
@@ -40,7 +42,7 @@ export interface Manifest {
 }
 
 /** musl builds are a separate download, and from Node the only way to tell is to look. */
-function musl(): boolean {
+export function musl(): boolean {
   return fs.existsSync('/lib/libc.musl-x86_64.so.1') || fs.existsSync('/lib/libc.musl-aarch64.so.1');
 }
 
@@ -58,12 +60,6 @@ export function buildFor(manifest: Manifest, key: string): PlatformBuild {
   if (!CHECKSUM_PATTERN.test(build.checksum)) throw new Error(`The ${key} build carries no usable checksum.`);
   if (build.binary === '') throw new Error(`The ${key} build names no binary.`);
   return build;
-}
-
-async function getText(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`GET ${url} answered ${response.status}.`);
-  return await response.text();
 }
 
 export async function resolveVersion(requested: string): Promise<string> {

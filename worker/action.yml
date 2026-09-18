@@ -22,6 +22,14 @@ inputs:
       installed on the machine beforehand.
     required: false
     default: 'stable'
+  node-version:
+    description: >-
+      Which Node.js to put on PATH for the CLI's own shell commands - the run-tests skill's
+      script chief among them - as `lts`, `latest`, or an exact version. Downloaded,
+      checksum-verified and cached per runner, same as the CLI itself, so a self-hosted image
+      built only to run Actions does not have to carry one already.
+    required: false
+    default: 'lts'
   claude-token:
     description: >-
       A Claude Code OAuth token, from `claude setup-token`. Leave empty only if the step

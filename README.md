@@ -99,6 +99,16 @@ runner's tool cache - a first run costs the download, every run after it costs n
 `version` input takes a channel (`stable`, the default, or `latest`) or an exact version to
 pin.
 
+**Node.js is installed the same way, for the same reason.** The CLI's own shell commands run
+whatever the runner's image happened to ship with, and an image built only to execute Actions
+- `myoung34/github-runner`, GitHub's own Windows service account - is not guaranteed to
+expose a `node` at all. The `node-version` input (default `lts`, or `latest`, or an exact
+version) is downloaded from nodejs.org, checksum-verified against its own `SHASUMS256.txt`,
+cached per version, and put on PATH before the session starts - so a skill that shells out to
+`node`, the way `run-tests` does, finds one whether or not the machine already had it. Node.js
+ships no official musl build, so this fails fast with a clear message on an Alpine-based
+runner image rather than downloading a binary that cannot run there.
+
 That is worth doing rather than asking for a preinstalled binary, because a self-hosted
 runner's service usually runs as an account nobody logs into: it sees only the machine PATH
 and cannot read another user's home, so the ordinary per-user install is invisible to it. The

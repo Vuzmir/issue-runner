@@ -18,6 +18,7 @@ import * as path from 'node:path';
 import * as core from '@actions/core';
 
 import { install } from './install.js';
+import { ensureNode } from './node.js';
 import { lineReader, readLine } from './transcript.js';
 
 /** A runner account has no git identity of its own, and `git commit` refuses without one. */
@@ -53,6 +54,11 @@ async function run(): Promise<void> {
   // Before the prompt is built, so a runner that cannot reach the download service says so
   // rather than after a claim has already been announced.
   const executable = await install(core.getInput('version', { required: true }));
+
+  // A skill's own script is the CLI's business, not ours - but if the shell it runs from has
+  // no `node`, every one of them fails alike. Installing it here, ahead of the session, means
+  // that failure never happens instead of being caught and worked around mid-session.
+  await ensureNode(core.getInput('node-version', { required: true }));
 
   core.notice(`Working #${issue} (${task}) with Claude ${model}`);
 

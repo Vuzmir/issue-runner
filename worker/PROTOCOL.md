@@ -148,27 +148,13 @@ Four consequences come up on nearly every issue:
 
 ## Phase 3 — test, narrowly
 
-The pull request runs the full suite. You do not. Running it here proves nothing new and fills
-your context with output you cannot afford — and a context spent on passing tests is a context
-not spent on the fix.
+The pull request runs the full suite. You do not — that proves nothing new and spends context
+the fix needs instead.
 
 **Find the repository's own narrow-run command in its agent doc** (typically a "Running the
-tests" section) and use it. Then:
-
-- **Run the narrowest slice that still covers your change**, and run it once. Do not re-run a
-  green slice to be sure.
-- **Never run the whole suite.** If the repository ships a wrapper that refuses an unnarrowed
-  run, that refusal is the policy, not an obstacle to route around — do not call the
-  underlying test command directly to get past it.
-- **Read results, not transcripts.** What you need from a run is the pass/fail counts and, for
-  each failure, its message and stack trace. If a run hands you more than that, capture it to
-  a file and `grep` the file — never page the whole thing into your context.
-- **"The filter matched no tests" is a failure**, not a pass. Most runners exit 0 when a filter
-  matches nothing. Check that the count is non-zero before believing a green run.
-- Changed code in more than one project or package? One narrowed run per project, not one run
-  of everything.
-- If the repository documents no way to run a narrow slice, **do not fall back to running
-  everything**. Say so in the pull request body and let CI be the gate.
+tests" section) and use it, scoped to what you changed. If the repository documents no way to
+run a narrow slice, do not fall back to running everything — say so in the pull request body
+and let CI be the gate.
 
 Your change is not done while its slice is red. If you cannot make it green within the issue's
 scope, that is a `blocked` outcome with the failure quoted in the comment — not a weakened

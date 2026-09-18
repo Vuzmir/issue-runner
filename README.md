@@ -129,6 +129,15 @@ Two of its inputs deserve a word:
 Commits are authored as `issue-runner <issue-runner@users.noreply.github.com>`: a runner
 account has no git identity of its own, and `git commit` refuses without one.
 
+**If the runner itself runs as root** - some self-hosted container images do - the CLI refuses
+its own `bypassPermissions` mode there and this step fails with `--dangerously-skip-permissions
+cannot be used with root/sudo privileges`. That refusal exists because bypass mode already
+removes the approval checkpoint, and root removes the last thing that would have contained a
+mistake. The CLI's own escape hatch is `IS_SANDBOX=1`, for exactly the unattended-container
+case this step already is; set it as `env:` on this step in the calling workflow, not
+something this action decides for you - accepting that trade-off is a call each repository
+should make for itself.
+
 ## The state machine
 
 Every issue the runner cares about carries exactly one `status:` label. Issues with no

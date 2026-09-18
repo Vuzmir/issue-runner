@@ -126,6 +126,22 @@ Two of its inputs deserve a word:
 - **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
   environment already carries `ANTHROPIC_API_KEY`.
 
+### What it cost
+
+Every run rewrites a single comment on the issue with what that issue has cost so far -
+tokens in and out, cache written and read, how many runs, and the rate-limit windows the last
+run left behind. One comment rather than one per run, because an issue is normally worked
+more than once and a note showing only the latest would quietly drop what the earlier attempts
+spent. The running total lives in the comment's marker line, the same way the loop carries
+pull request state, so nothing has to be stored anywhere else.
+
+The dollar figure is the **list-price equivalent** and the note says so: it is what those
+tokens would cost through the API, not a charge against a subscription. The limit a
+subscription actually spends is the rate-limit window, which is why that is reported beside
+it. A failed run is written up too - that is exactly the run whose cost you want to see - and
+if the comment cannot be written the run is not failed over it, since losing a note must not
+turn a finished pull request into `status:failed`.
+
 Commits are authored as `issue-runner <issue-runner@users.noreply.github.com>`: a runner
 account has no git identity of its own, and `git commit` refuses without one.
 

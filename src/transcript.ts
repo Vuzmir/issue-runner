@@ -16,6 +16,26 @@ export interface ContentBlock {
   is_error?: boolean;
 }
 
+/** What one model contributed to a session. The CLI reaches for more than the one it was
+ * asked for, so this is keyed by model and never has exactly one entry. */
+export interface ModelUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
+  costUSD?: number;
+  /** `claude-sonnet-5` rather than the dated build the key names. */
+  canonicalModel?: string;
+}
+
+/** Utilization is a fraction of the window, not a percentage. */
+export interface RateLimitInfo {
+  unifiedWindows?: {
+    five_hour?: { utilization?: number };
+    seven_day?: { utilization?: number };
+  };
+}
+
 export interface StreamEvent {
   type: string;
   subtype?: string;
@@ -25,6 +45,8 @@ export interface StreamEvent {
   num_turns?: number;
   duration_ms?: number;
   total_cost_usd?: number;
+  modelUsage?: Record<string, ModelUsage>;
+  rate_limit_info?: RateLimitInfo;
   message?: { content?: ContentBlock[] };
 }
 
@@ -78,12 +100,17 @@ export function lineReader(onLine: (line: string) => void): (chunk: string) => v
   };
 }
 
-/** One stream line, as either the lines it describes or the raw text if it is not an event. */
-export function readLine(line: string): string[] {
+/**
+ * One stream line as an event, or undefined when the CLI printed something that is not one.
+ * Parsing is separate from `linesFor` because the caller wants the event too, not only what
+ * it reads as - the run's cost arrives on the same events the log is built from.
+ */
+export function parseLine(line: string): StreamEvent | undefined {
   try {
-    return linesFor(JSON.parse(line) as StreamEvent);
+    const parsed: unknown = JSON.parse(line);
+    if (typeof parsed !== 'object' || parsed === null) return undefined;
+    return parsed as StreamEvent;
   } catch {
-    // Not every line the CLI writes is an event; keep it rather than lose it.
-    return [line];
+    return undefined;
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { lineReader, linesFor, readLine, summarize, type StreamEvent } from './transcript.js';
+import { lineReader, linesFor, parseLine, summarize, type StreamEvent } from './transcript.js';
 
 describe('summarize', () => {
   it('flattens a multi-line string onto one line', () => {
@@ -81,11 +81,19 @@ describe('linesFor', () => {
   });
 });
 
-describe('readLine', () => {
-  it('passes through a line that is not an event rather than swallowing it', () => {
-    expect(readLine('Warning: something the CLI printed plainly')).toEqual([
-      'Warning: something the CLI printed plainly',
-    ]);
+describe('parseLine', () => {
+  it('reads an event', () => {
+    expect(parseLine('{"type":"result","num_turns":3}')).toEqual({ type: 'result', num_turns: 3 });
+  });
+
+  it('says nothing for a line the CLI printed plainly, so the caller can keep it', () => {
+    expect(parseLine('Warning: something the CLI printed plainly')).toBeUndefined();
+  });
+
+  it('rejects valid JSON that is not an object, which would read as an event with no fields', () => {
+    expect(parseLine('42')).toBeUndefined();
+    expect(parseLine('null')).toBeUndefined();
+    expect(parseLine('"a string"')).toBeUndefined();
   });
 });
 

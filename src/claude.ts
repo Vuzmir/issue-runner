@@ -18,8 +18,10 @@ import * as path from 'node:path';
 import * as core from '@actions/core';
 
 import { install } from './install.js';
+import { updateNote } from './note.js';
 import { ensureNode } from './node.js';
-import { lineReader, readLine } from './transcript.js';
+import { lineReader, linesFor, parseLine, type RateLimitInfo, type StreamEvent } from './transcript.js';
+import { USAGE_MARKER, addRun, lastRunFrom, parseTotals, usageNote } from './usage.js';
 
 /** A runner account has no git identity of its own, and `git commit` refuses without one. */
 const GIT_NAME = 'issue-runner';
@@ -105,11 +107,24 @@ async function run(): Promise<void> {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+  // The stream is read once, for two purposes: the Actions log, and what the session spent.
+  let result: StreamEvent | undefined;
+  let limits: RateLimitInfo | undefined;
+
   worker.stdout.setEncoding('utf8');
   worker.stdout.on(
     'data',
     lineReader((line) => {
-      for (const text of readLine(line)) core.info(text);
+      const event = parseLine(line);
+      if (event === undefined) {
+        // Not every line the CLI writes is an event; print it rather than lose it.
+        core.info(line);
+        return;
+      }
+      for (const text of linesFor(event)) core.info(text);
+      if (event.type === 'result') result = event;
+      // Its own event type, and the last one seen is the state the run left behind.
+      if (event.rate_limit_info !== undefined) limits = event.rate_limit_info;
     }),
   );
   worker.stderr.setEncoding('utf8');
@@ -122,12 +137,30 @@ async function run(): Promise<void> {
     worker.on('close', resolve);
   });
 
+  const written = path.join(stateDir, 'next-status');
+  const status = fs.existsSync(written) ? fs.readFileSync(written, 'utf8').trim() : '';
+  // What the release step is about to do with this run, said in its own vocabulary: a run
+  // that died is `failed`, and one that wrote nothing parks at `blocked`.
+  const outcome = code !== 0 ? 'failed' : status === '' ? 'blocked' : status;
+
+  // A failed run is exactly the one whose cost you want to see, so this comes before the
+  // exit code is acted on - and it is reported rather than thrown, because losing the note
+  // must not turn a finished pull request into `status:failed`.
+  if (result !== undefined) {
+    const session = result;
+    try {
+      await updateNote(githubToken, Number(issue), USAGE_MARKER, (previous) =>
+        usageNote(addRun(parseTotals(previous), session), lastRunFrom(session, limits, task, outcome)),
+      );
+    } catch (error: unknown) {
+      core.warning(`Could not update the usage note on #${issue}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+
   if (code !== 0) throw new Error(`The Claude CLI exited with ${code}.`);
 
   // Not an error - the release step turns a missing outcome into status:blocked on purpose.
   // Saying so here is what makes that label understandable an hour later.
-  const outcome = path.join(stateDir, 'next-status');
-  const status = fs.existsSync(outcome) ? fs.readFileSync(outcome, 'utf8').trim() : '';
   if (status === '') core.warning('The worker wrote no next-status; the issue will park at blocked.');
   else core.notice(`#${issue} -> ${status}`);
 }

@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+'use strict';
+
+const { execSync } = require('node:child_process');
+
+function run(cmd) {
+  execSync(cmd, { stdio: 'inherit' });
+}
+
+try {
+  console.log('[pre-commit] building dist/index.js and worker/index.js...');
+  run('npm run build');
+} catch {
+  console.error('\n[pre-commit] build failed - commit aborted. Fix the errors above and try again.');
+  process.exit(1);
+}
+
+try {
+  // Only stages the bundles if the rebuild actually changed their bytes.
+  run('git add dist/index.js worker/index.js');
+} catch {
+  console.error('\n[pre-commit] could not stage the rebuilt bundles - commit aborted.');
+  process.exit(1);
+}
+
+process.exit(0);

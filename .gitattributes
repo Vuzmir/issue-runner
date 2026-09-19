@@ -3,3 +3,6 @@ dist/index.js linguist-generated=true
 dist/index.js -diff
 worker/index.js linguist-generated=true
 worker/index.js -diff
+
+# Git runs this via its shebang line; CRLF would break that on a Windows checkout.
+.githooks/pre-commit text eol=lf

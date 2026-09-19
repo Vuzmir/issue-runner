@@ -47782,7 +47782,7 @@ ${log}`);
     for (const review of reviews) {
       if (!isHuman(review.user?.type, review.user?.login, review.body)) continue;
       const at = review.submitted_at;
-      if (at === void 0 || new Date(at).getTime() <= after) continue;
+      if (at == null || new Date(at).getTime() <= after) continue;
       if ((review.body ?? "").trim() === "" && review.state !== "CHANGES_REQUESTED") continue;
       found.push({
         kind: "review",
@@ -48022,7 +48022,12 @@ async function followMerging(gateway, issues, ctx) {
     const comments = ctx.followReviews ? await gateway.humanCommentsSince(pull.number, marker.seen ?? pull.createdAt) : [];
     const checks = await gateway.checksFor(pull.headSha);
     core6.info(
-      `#${issue2.number}: PR #${pull.number} checks are ${checks.verdict}, ${comments.length} unanswered comment(s)`
+      `#${issue2.number}: PR #${pull.number} checks are ${checks.verdict}, ${comments.length} unanswered comment(s)` + // The one case where "none" does not mean "nobody said anything": a review left in
+      // draft is visible to its author in the UI and to nobody else, the API included. It
+      // looks like a reviewed pull request and reads to the runner as an untouched one.
+      // Only worth saying when the tick is about to do nothing and wait on a person -
+      // a red pull request is already being worked on, hint or no hint.
+      (ctx.followReviews && comments.length === 0 && checks.verdict === "passing" ? " (a review left unsubmitted is invisible here - press Submit review)" : "")
     );
     if (comments.length > 0) {
       followUp = {

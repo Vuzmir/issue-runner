@@ -469,8 +469,11 @@ export class GitHubGateway implements Gateway {
     );
     for (const review of reviews) {
       if (!isHuman(review.user?.type, review.user?.login, review.body)) continue;
+      // A review still being drafted has no `submitted_at`, and its inline comments are not
+      // published either - GitHub shows them to their author alone until Submit review is
+      // pressed, so no token the runner holds can see them. Nothing to answer yet.
       const at = review.submitted_at;
-      if (at === undefined || new Date(at).getTime() <= after) continue;
+      if (at == null || new Date(at).getTime() <= after) continue;
       // An approval with nothing written carries no instruction; a change request always does.
       if ((review.body ?? '').trim() === '' && review.state !== 'CHANGES_REQUESTED') continue;
       found.push({

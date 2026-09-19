@@ -370,7 +370,15 @@ export async function followMerging(
     const checks = await gateway.checksFor(pull.headSha);
     core.info(
       `#${issue.number}: PR #${pull.number} checks are ${checks.verdict}, ` +
-        `${comments.length} unanswered comment(s)`,
+        `${comments.length} unanswered comment(s)` +
+        // The one case where "none" does not mean "nobody said anything": a review left in
+        // draft is visible to its author in the UI and to nobody else, the API included. It
+        // looks like a reviewed pull request and reads to the runner as an untouched one.
+        // Only worth saying when the tick is about to do nothing and wait on a person -
+        // a red pull request is already being worked on, hint or no hint.
+        (ctx.followReviews && comments.length === 0 && checks.verdict === 'passing'
+          ? ' (a review left unsubmitted is invisible here - press Submit review)'
+          : ''),
     );
 
     if (comments.length > 0) {

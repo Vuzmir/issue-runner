@@ -181,6 +181,14 @@ Whether CI passed is read from check conclusions and commit statuses - never inf
 model. Comments authored by bots, and the runner's own marker comments, are filtered out, or
 it would answer itself forever.
 
+One thing catches people out, and it is GitHub's doing rather than the runner's: comments
+added through **Start a review** stay a *draft* until **Submit review** is pressed. A draft
+is visible to its author and to nobody else - not to other reviewers, and not to any API
+token, so the runner cannot see it either. A pull request that looks thoroughly reviewed in
+your own browser is an untouched one to every tick, which will keep reporting `0 unanswered
+comment(s)` and keep waiting for a human to merge. Submit the review, or use the single
+**Comment** button, and the next tick picks the comments up.
+
 A follow-up claim reuses `status:processing` and the ordinary lock rather than adding a
 state. One consequence is handled explicitly: when a lock is reclaimed, an issue that
 already has an open pull request goes back to `status:merging`, not `status:open` -

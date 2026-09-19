@@ -20,8 +20,8 @@ import * as core from '@actions/core';
 import { install } from './install.js';
 import { updateNote } from './note.js';
 import { ensureNode } from './node.js';
-import { lineReader, linesFor, parseLine, type RateLimitInfo, type StreamEvent } from './transcript.js';
-import { USAGE_MARKER, addRun, lastRunFrom, parseTotals, usageNote } from './usage.js';
+import { lineReader, linesFor, parseLine, type StreamEvent } from './transcript.js';
+import { USAGE_MARKER, addRun, lastRunFrom, parseTotals, usageNote, type Limits } from './usage.js';
 
 /** A runner account has no git identity of its own, and `git commit` refuses without one. */
 const GIT_NAME = 'issue-runner';
@@ -108,8 +108,10 @@ async function run(): Promise<void> {
   });
 
   // The stream is read once, for two purposes: the Actions log, and what the session spent.
+  // The rate limit is kept at both ends - the CLI reports it from the first response onwards,
+  // so the first and last readings bracket what this run consumed of the window.
   let result: StreamEvent | undefined;
-  let limits: RateLimitInfo | undefined;
+  const limits: Limits = { before: undefined, after: undefined };
 
   worker.stdout.setEncoding('utf8');
   worker.stdout.on(
@@ -123,8 +125,10 @@ async function run(): Promise<void> {
       }
       for (const text of linesFor(event)) core.info(text);
       if (event.type === 'result') result = event;
-      // Its own event type, and the last one seen is the state the run left behind.
-      if (event.rate_limit_info !== undefined) limits = event.rate_limit_info;
+      if (event.rate_limit_info !== undefined) {
+        limits.before ??= event.rate_limit_info;
+        limits.after = event.rate_limit_info;
+      }
     }),
   );
   worker.stderr.setEncoding('utf8');

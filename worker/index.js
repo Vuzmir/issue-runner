@@ -12389,15 +12389,15 @@ var require_request2 = __commonJS({
           signal = input[kSignal];
         }
         const origin = this[kRealm].settingsObject.origin;
-        let window = "client";
+        let window2 = "client";
         if (request.window?.constructor?.name === "EnvironmentSettingsObject" && sameOrigin(request.window, origin)) {
-          window = request.window;
+          window2 = request.window;
         }
         if (init.window != null) {
-          throw new TypeError(`'window' option '${window}' must be null`);
+          throw new TypeError(`'window' option '${window2}' must be null`);
         }
         if ("window" in init) {
-          window = "no-window";
+          window2 = "no-window";
         }
         request = makeRequest({
           // URL request’s URL.
@@ -12412,7 +12412,7 @@ var require_request2 = __commonJS({
           // client This’s relevant settings object.
           client: this[kRealm].settingsObject,
           // window window.
-          window,
+          window: window2,
           // priority request’s priority.
           priority: request.priority,
           // origin request’s origin. The propagation of the origin is only significant for navigation requests
@@ -32337,15 +32337,15 @@ var require_request4 = __commonJS({
           signal = input[kSignal];
         }
         const origin = environmentSettingsObject.settingsObject.origin;
-        let window = "client";
+        let window2 = "client";
         if (request.window?.constructor?.name === "EnvironmentSettingsObject" && sameOrigin(request.window, origin)) {
-          window = request.window;
+          window2 = request.window;
         }
         if (init.window != null) {
-          throw new TypeError(`'window' option '${window}' must be null`);
+          throw new TypeError(`'window' option '${window2}' must be null`);
         }
         if ("window" in init) {
-          window = "no-window";
+          window2 = "no-window";
         }
         request = makeRequest({
           // URL request’s URL.
@@ -32360,7 +32360,7 @@ var require_request4 = __commonJS({
           // client This’s relevant settings object.
           client: environmentSettingsObject.settingsObject,
           // window window.
-          window,
+          window: window2,
           // priority request’s priority.
           priority: request.priority,
           // origin request’s origin. The propagation of the origin is only significant for navigation requests
@@ -47182,15 +47182,20 @@ function modelsIn(result) {
   return [...new Set(named)].sort();
 }
 function lastRunFrom(result, limits, task, outcome) {
-  const windows = limits?.unifiedWindows;
   return {
     task,
     outcome,
     turns: result.num_turns ?? 0,
     durationMs: result.duration_ms ?? 0,
     models: modelsIn(result),
-    fiveHour: windows?.five_hour?.utilization,
-    sevenDay: windows?.seven_day?.utilization
+    fiveHour: {
+      before: limits.before?.unifiedWindows?.five_hour?.utilization,
+      after: limits.after?.unifiedWindows?.five_hour?.utilization
+    },
+    sevenDay: {
+      before: limits.before?.unifiedWindows?.seven_day?.utilization,
+      after: limits.after?.unifiedWindows?.seven_day?.utilization
+    }
   };
 }
 function count(value) {
@@ -47201,18 +47206,24 @@ function duration(ms) {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 function percent(utilization) {
-  return utilization === void 0 ? void 0 : `${Math.round(utilization * 100)}%`;
+  return `${Math.round(utilization * 100)}%`;
+}
+function window(name, span) {
+  if (span.after === void 0) return span.before === void 0 ? void 0 : `${name} ${percent(span.before)}`;
+  if (span.before === void 0 || percent(span.before) === percent(span.after)) return `${name} ${percent(span.after)}`;
+  return `${name} ${percent(span.before)} \u2192 ${percent(span.after)}`;
 }
 function usageNote(totals, last) {
-  const limits = [
-    percent(last.fiveHour) === void 0 ? void 0 : `5-hour ${percent(last.fiveHour)}`,
-    percent(last.sevenDay) === void 0 ? void 0 : `7-day ${percent(last.sevenDay)}`
-  ].filter((part) => part !== void 0);
+  const limits = [window("5-hour", last.fiveHour), window("7-day", last.sevenDay)].filter(
+    (part) => part !== void 0
+  );
   const lines = [
     formatTotals(totals),
     "### What this issue has cost",
     "",
-    "| tokens | |",
+    // The column is labelled a total because the first run reads as one either way, and by
+    // the second the reader needs to know which of the two numbers on the page it is.
+    "| tokens | total |",
     "| --- | --: |",
     `| input | ${count(totals.input)} |`,
     `| output | ${count(totals.output)} |`,
@@ -47223,7 +47234,7 @@ function usageNote(totals, last) {
     "",
     `Last run \xB7 \`${last.task}\` \u2192 \`${last.outcome}\` \xB7 ${last.turns} turns \xB7 ${duration(last.durationMs)}` + (last.models.length === 0 ? "" : ` \xB7 ${last.models.join(", ")}`)
   ];
-  if (limits.length > 0) lines.push(`Rate limit after it \xB7 ${limits.join(" \xB7 ")}`);
+  if (limits.length > 0) lines.push(`Rate limit over it \xB7 ${limits.join(" \xB7 ")}`);
   return lines.join("\n");
 }
 
@@ -47285,7 +47296,7 @@ async function run() {
     stdio: ["ignore", "pipe", "pipe"]
   });
   let result;
-  let limits;
+  const limits = { before: void 0, after: void 0 };
   worker.stdout.setEncoding("utf8");
   worker.stdout.on(
     "data",
@@ -47297,7 +47308,10 @@ async function run() {
       }
       for (const text of linesFor(event)) core3.info(text);
       if (event.type === "result") result = event;
-      if (event.rate_limit_info !== void 0) limits = event.rate_limit_info;
+      if (event.rate_limit_info !== void 0) {
+        limits.before ??= event.rate_limit_info;
+        limits.after = event.rate_limit_info;
+      }
     })
   );
   worker.stderr.setEncoding("utf8");

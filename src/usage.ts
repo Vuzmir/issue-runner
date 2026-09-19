@@ -26,14 +26,32 @@ export interface Totals {
   costUsd: number;
 }
 
+/**
+ * A rate-limit window across one run. `before` is the first reading the CLI reported and
+ * `after` the last, so the gap between them is what this run spent of that window.
+ *
+ * Unlike the token totals this is never accumulated: the windows roll on their own schedule,
+ * so adding up what several runs each consumed would describe nothing real.
+ */
+export interface Span {
+  before: number | undefined;
+  after: number | undefined;
+}
+
+/** The first and last rate-limit readings of a session; they arrive on their own events. */
+export interface Limits {
+  before: RateLimitInfo | undefined;
+  after: RateLimitInfo | undefined;
+}
+
 export interface LastRun {
   task: string;
   outcome: string;
   turns: number;
   durationMs: number;
   models: string[];
-  fiveHour: number | undefined;
-  sevenDay: number | undefined;
+  fiveHour: Span;
+  sevenDay: Span;
 }
 
 const NOTHING: Totals = { runs: 0, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, costUsd: 0 };
@@ -89,21 +107,21 @@ export function modelsIn(result: StreamEvent): string[] {
 }
 
 /** The rate limit arrives on its own events, not on the result, so it is passed in. */
-export function lastRunFrom(
-  result: StreamEvent,
-  limits: RateLimitInfo | undefined,
-  task: string,
-  outcome: string,
-): LastRun {
-  const windows = limits?.unifiedWindows;
+export function lastRunFrom(result: StreamEvent, limits: Limits, task: string, outcome: string): LastRun {
   return {
     task,
     outcome,
     turns: result.num_turns ?? 0,
     durationMs: result.duration_ms ?? 0,
     models: modelsIn(result),
-    fiveHour: windows?.five_hour?.utilization,
-    sevenDay: windows?.seven_day?.utilization,
+    fiveHour: {
+      before: limits.before?.unifiedWindows?.five_hour?.utilization,
+      after: limits.after?.unifiedWindows?.five_hour?.utilization,
+    },
+    sevenDay: {
+      before: limits.before?.unifiedWindows?.seven_day?.utilization,
+      after: limits.after?.unifiedWindows?.seven_day?.utilization,
+    },
   };
 }
 
@@ -116,21 +134,32 @@ function duration(ms: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function percent(utilization: number | undefined): string | undefined {
-  return utilization === undefined ? undefined : `${Math.round(utilization * 100)}%`;
+function percent(utilization: number): string {
+  return `${Math.round(utilization * 100)}%`;
+}
+
+/**
+ * `5-hour 62% → 80%`, or a single figure when there is nothing to compare it against - and
+ * when rounding makes both ends the same, because `62% → 62%` says less than `62%` does.
+ */
+function window(name: string, span: Span): string | undefined {
+  if (span.after === undefined) return span.before === undefined ? undefined : `${name} ${percent(span.before)}`;
+  if (span.before === undefined || percent(span.before) === percent(span.after)) return `${name} ${percent(span.after)}`;
+  return `${name} ${percent(span.before)} → ${percent(span.after)}`;
 }
 
 export function usageNote(totals: Totals, last: LastRun): string {
-  const limits = [
-    percent(last.fiveHour) === undefined ? undefined : `5-hour ${percent(last.fiveHour)}`,
-    percent(last.sevenDay) === undefined ? undefined : `7-day ${percent(last.sevenDay)}`,
-  ].filter((part): part is string => part !== undefined);
+  const limits = [window('5-hour', last.fiveHour), window('7-day', last.sevenDay)].filter(
+    (part): part is string => part !== undefined,
+  );
 
   const lines = [
     formatTotals(totals),
     '### What this issue has cost',
     '',
-    '| tokens | |',
+    // The column is labelled a total because the first run reads as one either way, and by
+    // the second the reader needs to know which of the two numbers on the page it is.
+    '| tokens | total |',
     '| --- | --: |',
     `| input | ${count(totals.input)} |`,
     `| output | ${count(totals.output)} |`,
@@ -146,7 +175,7 @@ export function usageNote(totals: Totals, last: LastRun): string {
       (last.models.length === 0 ? '' : ` · ${last.models.join(', ')}`),
   ];
 
-  if (limits.length > 0) lines.push(`Rate limit after it · ${limits.join(' · ')}`);
+  if (limits.length > 0) lines.push(`Rate limit over it · ${limits.join(' · ')}`);
 
   return lines.join('\n');
 }

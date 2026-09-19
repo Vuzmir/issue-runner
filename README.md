@@ -129,16 +129,24 @@ Two of its inputs deserve a word:
 ### What it cost
 
 Every run rewrites a single comment on the issue with what that issue has cost so far -
-tokens in and out, cache written and read, how many runs, and the rate-limit windows the last
-run left behind. One comment rather than one per run, because an issue is normally worked
-more than once and a note showing only the latest would quietly drop what the earlier attempts
-spent. The running total lives in the comment's marker line, the same way the loop carries
-pull request state, so nothing has to be stored anywhere else.
+tokens in and out, cache written and read, and how many runs it took. One comment rather than
+one per run, because an issue is normally worked more than once and a note showing only the
+latest would quietly drop what the earlier attempts spent. The running total lives in the
+comment's marker line, the same way the loop carries pull request state, so nothing has to be
+stored anywhere else.
+
+The token table and the dollar figure are **cumulative over the issue**; the last line is the
+run that just finished. Its rate limit is reported as a span - `5-hour 41% → 80%` - so the
+gap is what that one run consumed of the window. That is the one figure never accumulated:
+the windows roll on their own schedule, so adding up what several runs each spent would
+describe nothing real. The CLI reports the limit from its first response onwards, so `before`
+is as of that response rather than the instant the run began - a turn's worth of difference on
+a run that takes a hundred of them.
 
 The dollar figure is the **list-price equivalent** and the note says so: it is what those
-tokens would cost through the API, not a charge against a subscription. The limit a
-subscription actually spends is the rate-limit window, which is why that is reported beside
-it. A failed run is written up too - that is exactly the run whose cost you want to see - and
+tokens would cost through the API, not a charge against a subscription. What a subscription
+actually spends is that rate-limit span, which is why the two sit together. A failed run is
+written up too - that is exactly the run whose cost you want to see - and
 if the comment cannot be written the run is not failed over it, since losing a note must not
 turn a finished pull request into `status:failed`.
 

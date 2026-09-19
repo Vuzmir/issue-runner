@@ -99,7 +99,10 @@ describe('modelsIn', () => {
 
 describe('usageNote', () => {
   const totals = { runs: 3, input: 3_612, output: 55_290, cacheWrite: 338_700, cacheRead: 5_520_660, costUsd: 5.1234 };
-  const limits = { unifiedWindows: { five_hour: { utilization: 0.74 }, seven_day: { utilization: 0.36 } } };
+  const limits = {
+    before: { unifiedWindows: { five_hour: { utilization: 0.62 }, seven_day: { utilization: 0.35 } } },
+    after: { unifiedWindows: { five_hour: { utilization: 0.74 }, seven_day: { utilization: 0.36 } } },
+  };
 
   it('leads with the marker, so the next run can find and re-read it', () => {
     const note = usageNote(totals, lastRunFrom(result, limits, 'implement', 'merging'));
@@ -114,7 +117,7 @@ describe('usageNote', () => {
     expect(note).toContain('$5.12');
     expect(note).toContain('`address-review` → `merging` · 23 turns · 4m 12s');
     expect(note).toContain('claude-haiku-4-5, claude-sonnet-5');
-    expect(note).toContain('5-hour 74% · 7-day 36%');
+    expect(note).toContain('Rate limit over it · 5-hour 62% → 74% · 7-day 35% → 36%');
   });
 
   it('says the list price is not a bill, because the number invites the opposite reading', () => {
@@ -124,9 +127,31 @@ describe('usageNote', () => {
   });
 
   it('leaves the rate limit out rather than inventing one when the CLI reported none', () => {
-    const note = usageNote(totals, lastRunFrom(result, undefined, 'implement', 'blocked'));
+    const note = usageNote(totals, lastRunFrom(result, { before: undefined, after: undefined }, 'implement', 'blocked'));
     expect(note).not.toContain('Rate limit');
     expect(note).toContain('→ `blocked`');
+  });
+
+  it('shows one figure rather than an arrow when rounding makes both ends the same', () => {
+    const flat = {
+      before: { unifiedWindows: { five_hour: { utilization: 0.7401 }, seven_day: { utilization: 0.36 } } },
+      after: { unifiedWindows: { five_hour: { utilization: 0.7404 }, seven_day: { utilization: 0.36 } } },
+    };
+    const note = usageNote(totals, lastRunFrom(result, flat, 'implement', 'merging'));
+    expect(note).toContain('Rate limit over it · 5-hour 74% · 7-day 36%');
+  });
+
+  it('still reports the window when only one end of the run was seen', () => {
+    const onlyAfter = { before: undefined, after: limits.after };
+    expect(usageNote(totals, lastRunFrom(result, onlyAfter, 'implement', 'merging'))).toContain('5-hour 74%');
+
+    const onlyBefore = { before: limits.before, after: undefined };
+    expect(usageNote(totals, lastRunFrom(result, onlyBefore, 'implement', 'merging'))).toContain('5-hour 62%');
+  });
+
+  it('labels the token column a total, since the table and the last-run line are different numbers', () => {
+    const note = usageNote(totals, lastRunFrom(result, limits, 'implement', 'merging'));
+    expect(note).toContain('| tokens | total |');
   });
 
   it('says "1 run" rather than "1 runs"', () => {

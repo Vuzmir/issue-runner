@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import * as core from '@actions/core';
 
+import { runWorker } from './claude.js';
 import { type Config, issueUrl, readConfig } from './config.js';
 import { GitHubGateway, type Gateway, type IssueView } from './gateway.js';
 import {
@@ -229,36 +230,67 @@ async function take(
     .addHeading(`issue-runner: claimed #${issue.number} (${task})`, 3)
     .addRaw(link(config, issue));
   await core.summary.write();
+
+  // Worked in the same process as the claim, rather than as a separate step: there is no
+  // longer a job boundary between them, so a failure here is caught rather than left to end
+  // the run - the issue still has to be released either way.
+  let jobStatus: 'success' | 'failure' = 'success';
+  try {
+    await runWorker({
+      issue: issue.number,
+      task,
+      model: config.model,
+      version: config.claudeVersion,
+      nodeVersion: config.nodeVersion,
+      claudeToken: config.claudeToken,
+      githubToken: config.githubToken,
+      stateDir: config.stateDir,
+    });
+  } catch (error: unknown) {
+    jobStatus = 'failure';
+    core.error(error instanceof Error ? error.message : String(error));
+  }
+
+  await release(config, gateway, issue.number, jobStatus);
+
+  // The issue is already released and labelled correctly above; failing the run after that is
+  // purely so a failed working session stays visible in the Actions UI and to anything
+  // watching run status, rather than reporting green on a run that had to fall back to
+  // `status:failed` or hand the pull request back unfinished.
+  if (jobStatus === 'failure') {
+    core.setFailed(`Working #${issue.number} failed.`);
+  }
 }
 
 // ---------------------------------------------------------------- release
 
-async function release(config: Config, gateway: Gateway): Promise<void> {
-  if (config.issue === undefined) {
-    throw new Error("Input 'issue' is required when mode is 'release'.");
-  }
-
-  const issue = await gateway.getIssue(config.issue);
+async function release(
+  config: Config,
+  gateway: Gateway,
+  issueNumber: number,
+  jobStatus: 'success' | 'failure',
+): Promise<void> {
+  const issue = await gateway.getIssue(issueNumber);
   if (issue === undefined) {
-    throw new Error(`Issue #${config.issue} could not be read, so it was not released.`);
+    throw new Error(`Issue #${issueNumber} could not be read, so it was not released.`);
   }
 
   const declared = readStateFile(config, 'next-status');
   const pull = readStateFile(config, 'pr');
   const pullNumber = pull === undefined || pull === '' ? undefined : Number(pull);
 
-  // Whether a pull request is open decides where a cancelled or failed run puts the issue:
-  // back to review, not back to the queue, because the branch already carries the work. The
-  // worker only leaves `pr` behind once it has pushed one, so a run that never got that far -
-  // including one that was claimed as `implement` over an issue that already had one - has to
-  // fall back to the marker instead of assuming there is nothing to lose.
+  // Whether a pull request is open decides where a failed run puts the issue: back to review,
+  // not back to the queue, because the branch already carries the work. The worker only
+  // leaves `pr` behind once it has pushed one, so a run that never got that far - including
+  // one that was claimed as `implement` over an issue that already had one - has to fall back
+  // to the marker instead of assuming there is nothing to lose.
   const pullView =
     pullNumber === undefined
       ? await findOpenPull(gateway, issue)
       : await gateway.getPullRequest(pullNumber);
-  const outcome = resolveRelease(config.jobStatus, declared, pullView?.state === 'OPEN');
+  const outcome = resolveRelease(jobStatus, declared, pullView?.state === 'OPEN');
   if (outcome.warning !== undefined) {
-    core.warning(`#${config.issue}: ${outcome.warning}`);
+    core.warning(`#${issueNumber}: ${outcome.warning}`);
   }
 
   const target = config.labels.name(outcome.target);
@@ -311,7 +343,7 @@ async function run(): Promise<void> {
   }
 
   const gateway = new GitHubGateway(config);
-  await (config.mode === 'claim' ? claim(config, gateway) : release(config, gateway));
+  await claim(config, gateway);
 }
 
 run().catch((error: unknown) => {

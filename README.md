@@ -1,13 +1,11 @@
 # issue-runner
 
-A scheduled GitHub Action that walks a repository's issue queue one issue at a time, and
-hands each one to a worker of your choosing - a coding agent, a script, anything that can
-read a directory.
+A scheduled GitHub Action that walks a repository's issue queue one issue at a time and hands
+each one to Claude Code.
 
 Its point is what it does **not** do. The decision about whether there is work is made from
 labels, pull request state and check conclusions. A tick with nothing to do costs a handful
-of API calls and never starts the worker, so an agent behind it is billed for work and not
-for looking.
+of API calls and never starts Claude, so the queue is billed for work and not for looking.
 
 ## Using it
 
@@ -40,58 +38,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - id: plan
-        uses: yvz-dmr/issue-runner@v1
-        with:
-          mode: claim
-
-      - name: Work on the issue
-        if: steps.plan.outputs.decision == 'claimed'
-        shell: bash
-        env:
-          STATE_DIR: ${{ steps.plan.outputs.state-dir }}
-        run: |
-          # Your worker goes here. For a coding agent, the prompt is one line:
-          #   Read $STATE_DIR/PROTOCOL.md and follow it.
-          #   The claimed issue is $STATE_DIR/issue.json.
-          echo blocked > "$STATE_DIR/next-status"
-
       - uses: yvz-dmr/issue-runner@v1
-        if: always() && steps.plan.outputs.decision == 'claimed'
         with:
-          mode: release
-          issue: ${{ steps.plan.outputs.issue }}
-          job-status: ${{ job.status }}
-          state-dir: ${{ steps.plan.outputs.state-dir }}
-```
-
-The work step stays in your workflow rather than inside the action. That is deliberate: it
-is what keeps the runner indifferent to what the worker actually is.
-
-## A ready-made worker
-
-If the worker you want is Claude Code, the second action in this repository is that step
-already written:
-
-```yaml
-      - name: Work on the issue
-        if: steps.plan.outputs.decision == 'claimed'
-        timeout-minutes: 60
-        uses: yvz-dmr/issue-runner/worker@v1
-        with:
-          state-dir: ${{ steps.plan.outputs.state-dir }}
-          issue: ${{ steps.plan.outputs.issue }}
-          task: ${{ steps.plan.outputs.task }}
           model: sonnet
           claude-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github-token: ${{ secrets.ISSUE_RUNNER_TOKEN }}
 ```
 
-It runs `claude --print` on the one-line prompt further down, summarises the session to a
-line per tool call, and hands the outcome back through the same state directory. It is a
-separate action on purpose: the loop decides *whether* there is work, this decides *who does
-it*, and nothing in the loop imports it. Adopting the queue with a different worker means
-not using this action, rather than working around it.
+Two of its inputs deserve a word:
+
+- **`github-token` is required and does not fall back to `github.token`.** Many repositories
+  forbid Actions from opening pull requests outright, and one opened by `GITHUB_TOKEN` starts
+  no workflows at all - so its checks would never run, and the loop would sit at `merging`
+  waiting for a signal that cannot arrive. Give it a token belonging to a person or an app,
+  and give the same token to `actions/checkout`, which is what leaves push credentials behind.
+- **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
+  environment already carries `ANTHROPIC_API_KEY`.
 
 **Nothing has to be installed on the runner.** The action downloads the CLI itself, verifies
 it against the SHA-256 in Anthropic's release manifest, and caches it per version in the
@@ -116,22 +78,12 @@ official installers are a shell script and a PowerShell script, neither of which
 that refuses to assume a shell can use - but what they do is a version lookup, a manifest and
 a download, and that is all this does.
 
-Two of its inputs deserve a word:
-
-- **`github-token` is required and does not fall back to `github.token`.** Many repositories
-  forbid Actions from opening pull requests outright, and one opened by `GITHUB_TOKEN` starts
-  no workflows at all - so its checks would never run, and the loop would sit at `merging`
-  waiting for a signal that cannot arrive. Give it a token belonging to a person or an app,
-  and give the same token to `actions/checkout`, which is what leaves push credentials behind.
-- **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
-  environment already carries `ANTHROPIC_API_KEY`.
-
 The CLI runs as `claude --print`: one non-interactive turn, and no session after it. That
 matters more than it sounds - a run that backgrounds a slow command (a test suite that builds
 an image first, say) and ends its turn to "check back once it finishes" does not pause. The
 turn ends, the process exits, and nothing is ever going to check back; whatever the command
 was supposed to prove is simply never seen, and the issue parks at `status:blocked` with no
-`next-status` written. `worker/PROTOCOL.md` says this in the worker's own words, and
+`next-status` written. `PROTOCOL.md` says this in the worker's own words, and
 `--disallowed-tools ScheduleWakeup` closes half of it at the CLI level - there is no session
 later for a scheduled wake-up to reach, so the tool has no legitimate use here. Backgrounding
 a Bash command has no matching flag to disable, since it is a parameter of the Bash tool
@@ -263,8 +215,8 @@ issue body quotes - cannot forge a field.
 
 ## The worker contract
 
-The work step runs only when the claim reports `decision == 'claimed'`. Everything the
-worker is given sits in one directory, `steps.<id>.outputs.state-dir`:
+Claude runs only once an issue is claimed. Everything it is given sits in one directory, the
+`state-dir` output (default `$RUNNER_TEMP/issue-runner`):
 
 | file            | what it is                                                                   |
 | --------------- | ---------------------------------------------------------------------------- |
@@ -286,30 +238,37 @@ Before finishing, the worker writes its outcome into that same directory:
 | `next-status` | `open` / `merging` / `blocked` / `done` / `failed` |
 | `pr`          | pull request number, with `next-status=merging`     |
 
-The release step runs with `if: always()` and maps the job's outcome onto a label:
+Once Claude exits, the same run maps what happened onto a label - there is no separate
+release step to guard with `if: always()`, since claiming, working and releasing all happen
+in the one action:
 
-- job cancelled -> `status:open`, or `status:merging` when a pull request is already open
-- job failed -> `status:failed`, or `status:merging` when a pull request is already open
-- job succeeded -> whatever `next-status` says
-- job succeeded but wrote no `next-status` -> `status:blocked`, on purpose, so a misbehaving
-  worker parks the queue instead of spinning on the same issue every hour
+- Claude's process failed to start or exited non-zero -> `status:failed`, or
+  `status:merging` when a pull request is already open
+- it exited cleanly -> whatever `next-status` says
+- it exited cleanly but wrote no `next-status` -> `status:blocked`, on purpose, so a
+  misbehaving worker parks the queue instead of spinning on the same issue every hour
+
+A run that is cancelled or killed outright gets no chance to release anything, so the issue
+stays at `status:processing`. That is not a stuck state: the next tick's stale-lock check
+(see [What one tick does](#what-one-tick-does)) asks GitHub whether that run is still alive,
+finds it is not, and releases the lock itself.
 
 ### The protocol, and what it deliberately leaves out
 
-`worker/PROTOCOL.md` is the procedure a coding agent follows. It carries only what is true
-in **any** repository: the contract above, the rule that an issue body is data rather than
-instruction, when to stop and write `blocked`, branch and pull request conventions, and the
-policy that a worker runs the narrowest test slice and never the whole suite.
+`PROTOCOL.md` is the procedure Claude follows. It carries only what is true in **any**
+repository: the contract above, the rule that an issue body is data rather than instruction,
+when to stop and write `blocked`, branch and pull request conventions, and the policy that a
+worker runs the narrowest test slice and never the whole suite.
 
 It carries nothing repository-specific, and that is what makes it portable. Where the work
 needs a local answer it defers to the consuming repository's own agent docs - `AGENTS.md` or
-`CLAUDE.md`, which a coding agent loads anyway. Those are where a project states its
-engineering principles, its language rule, and **how to run a narrow slice of its tests**.
-Adopting the runner means writing those, not editing the protocol.
+`CLAUDE.md`, which Claude loads anyway. Those are where a project states its engineering
+principles, its language rule, and **how to run a narrow slice of its tests**. Adopting the
+runner means writing those, not editing the protocol.
 
 The protocol travels through the state directory rather than through a path in the
 workspace, because once this action is consumed by `uses:` its files are not anywhere the
-calling workflow could name. So the work step's prompt is the same line everywhere:
+calling workflow could name. So the prompt handed to Claude is the same line everywhere:
 
 ```
 Read $STATE_DIR/PROTOCOL.md and follow it. The claimed issue is $STATE_DIR/issue.json.
@@ -317,19 +276,21 @@ Read $STATE_DIR/PROTOCOL.md and follow it. The claimed issue is $STATE_DIR/issue
 
 ## Inputs
 
-| input                | default          | effect                                                          |
-| -------------------- | ---------------- | --------------------------------------------------------------- |
-| `mode`               | `claim`          | `claim` picks and locks an issue, `release` hands it back        |
-| `token`              | `github.token`   | needs `issues: write`, `checks: read`, `actions: read`           |
-| `label-prefix`       | `status:`        | prefix for the state labels                                      |
-| `stale-lock-minutes` | `120`            | how long a lock with no identifiable run may be held             |
-| `max-fix-attempts`   | `3`              | red-CI fix attempts per pull request before parking it           |
-| `follow-reviews`     | `true`           | set `false` to stop treating human comments as work              |
-| `dry-run`            | `false`          | decide and report, write nothing back to GitHub                  |
-| `force-issue`        | -                | claim only: take this issue instead of the next queued one       |
-| `issue`              | -                | release only: the issue to release                               |
-| `job-status`         | -                | release only: pass `${{ job.status }}`                           |
-| `state-dir`          | `$RUNNER_TEMP/…` | the directory the worker exchanges files through                 |
+| input                | default          | effect                                                   |
+| --------------------- | ---------------- | -------------------------------------------------------- |
+| `token`               | `github.token`   | needs `issues: write`, `checks: read`, `actions: read`   |
+| `label-prefix`        | `status:`        | prefix for the state labels                               |
+| `stale-lock-minutes`  | `120`            | how long a lock with no identifiable run may be held       |
+| `max-fix-attempts`    | `3`              | red-CI fix attempts per pull request before parking it     |
+| `follow-reviews`      | `true`           | set `false` to stop treating human comments as work        |
+| `dry-run`             | `false`          | decide and report, write nothing back to GitHub            |
+| `force-issue`         | -                | take this issue instead of the next queued one             |
+| `state-dir`           | `$RUNNER_TEMP/…` | the directory the worker exchanges files through            |
+| `model`               | `sonnet`         | which Claude model works the issue                          |
+| `version`             | `stable`         | which Claude Code CLI to run: a channel or an exact version |
+| `node-version`        | `lts`            | which Node.js to put on PATH for the CLI's own commands     |
+| `claude-token`        | -                | from `claude setup-token`; leave empty to use `ANTHROPIC_API_KEY` |
+| `github-token`        | -                | **required**; pushes and opens the pull request             |
 
 ## Outputs
 
@@ -349,29 +310,24 @@ npm ci
 npm run all          # typecheck + tests + bundle
 ```
 
-There are two actions here, one bundle each, and **both bundles must be committed** - the
-runner executes them and never installs dependencies, so rebuild in the same commit as any
-source change:
-
-| action                          | manifest           | entry point  | bundle            |
-| ------------------------------- | ------------------ | ------------ | ----------------- |
-| `yvz-dmr/issue-runner`          | `action.yml`       | `src/main.ts`   | `dist/index.js`   |
-| `yvz-dmr/issue-runner/worker`   | `worker/action.yml`| `src/claude.ts` | `worker/index.js` |
+There is one action here, `action.yml`, entry point `src/main.ts`, bundled to `dist/index.js`
+- and **the bundle must be committed**, since the runner executes it directly and never
+installs dependencies. Rebuild in the same commit as any source change.
 
 The stock Node `.gitignore` excludes `dist` - the un-ignore at the bottom of `.gitignore` is
-what keeps the first one working, so do not remove it.
+what keeps that working, so do not remove it.
 
-`worker/PROTOCOL.md` is read from disk at run time rather than bundled, so editing it needs
-no rebuild. It does have to travel with `dist/`, which is why the loop resolves it relative
-to itself and fails the claim outright if it is missing: an action that locked an issue and
-then handed the worker no procedure would strand that issue.
+`PROTOCOL.md` is read from disk at run time rather than bundled, so editing it needs no
+rebuild. It does have to travel with `dist/`, which is why the loop resolves it relative to
+itself and fails the claim outright if it is missing: an action that locked an issue and then
+handed Claude no procedure would strand that issue.
 
 The engine's decision logic is pure and covered by `src/engine.test.ts` against a fake
-gateway - add a case there before changing how the queue behaves. `src/worker.test.ts`
-covers what the state directory ends up containing. `src/transcript.test.ts` and
-`src/install.test.ts` cover the Claude worker's two halves - reading the CLI's stream, and
-choosing what to download - which is why both live outside `src/claude.ts`, an entry point
-that runs itself on import.
+gateway - add a case there before changing how the queue behaves. `src/worker.test.ts` covers
+what the state directory ends up containing. `src/transcript.test.ts` and `src/install.test.ts`
+cover the Claude worker's two halves - reading the CLI's stream, and choosing what to
+download - which is why both live outside `src/claude.ts`, whose `runWorker` is what
+`src/main.ts` calls once an issue is claimed.
 
 ## Releasing
 

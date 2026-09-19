@@ -27,7 +27,7 @@ export interface FollowUpInput {
  * file, so no build step has to know about it.
  */
 export function protocolSource(): string {
-  return path.join(__dirname, '..', 'worker', PROTOCOL_NAME);
+  return path.join(__dirname, '..', PROTOCOL_NAME);
 }
 
 /**

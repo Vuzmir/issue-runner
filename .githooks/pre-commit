@@ -8,7 +8,7 @@ function run(cmd) {
 }
 
 try {
-  console.log('[pre-commit] building dist/index.js and worker/index.js...');
+  console.log('[pre-commit] building dist/index.js...');
   run('npm run build');
 } catch {
   console.error('\n[pre-commit] build failed - commit aborted. Fix the errors above and try again.');
@@ -16,10 +16,10 @@ try {
 }
 
 try {
-  // Only stages the bundles if the rebuild actually changed their bytes.
-  run('git add dist/index.js worker/index.js');
+  // Only stages the bundle if the rebuild actually changed its bytes.
+  run('git add dist/index.js');
 } catch {
-  console.error('\n[pre-commit] could not stage the rebuilt bundles - commit aborted.');
+  console.error('\n[pre-commit] could not stage the rebuilt bundle - commit aborted.');
   process.exit(1);
 }
 

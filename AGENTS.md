@@ -2,11 +2,11 @@
 
 ## Building
 
-Do not run `npm run build` (or `build:loop`/`build:worker`) yourself to "finish" a change, and do not
-hand-edit `dist/index.js` or `worker/index.js`. A pre-commit hook (`.githooks/pre-commit`, wired up via
-the `prepare` script) rebuilds both bundles and stages them automatically on every commit. Just edit the
-sources under `src/`; the bundles will be current by the time the commit lands. Only run the build
-manually if you need to sanity-check output without committing.
+Do not run `npm run build` yourself to "finish" a change, and do not hand-edit `dist/index.js`. A
+pre-commit hook (`.githooks/pre-commit`, wired up via the `prepare` script) rebuilds the bundle and
+stages it automatically on every commit. Just edit the sources under `src/`; the bundle will be
+current by the time the commit lands. Only run the build manually if you need to sanity-check output
+without committing.
 
 ## Releasing
 

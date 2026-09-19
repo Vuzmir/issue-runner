@@ -4,9 +4,7 @@
   "private": true,
   "description": "Issue queue engine, packaged as a local GitHub Action.",
   "scripts": {
-    "build": "npm run build:loop && npm run build:worker",
-    "build:loop": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --legal-comments=none",
-    "build:worker": "esbuild src/claude.ts --bundle --platform=node --target=node20 --format=cjs --outfile=worker/index.js --legal-comments=none",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/index.js --legal-comments=none",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "all": "npm run typecheck && npm run test && npm run build"

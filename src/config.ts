@@ -5,10 +5,7 @@ import { context } from '@actions/github';
 
 import { StatusLabels } from './statuses.js';
 
-export type Mode = 'claim' | 'release';
-
 export interface Config {
-  mode: Mode;
   token: string;
   owner: string;
   repo: string;
@@ -21,10 +18,12 @@ export interface Config {
   stateDir: string;
   runId: string;
   runUrl: string;
-  /** release only */
-  issue: number | undefined;
-  /** release only */
-  jobStatus: string;
+  /** worker */
+  model: string;
+  claudeVersion: string;
+  nodeVersion: string;
+  claudeToken: string;
+  githubToken: string;
 }
 
 /**
@@ -50,11 +49,6 @@ function optionalNumber(name: string): number | undefined {
 }
 
 export function readConfig(): Config {
-  const mode = core.getInput('mode', { required: true }).trim();
-  if (mode !== 'claim' && mode !== 'release') {
-    throw new Error(`Input 'mode' must be 'claim' or 'release', got '${mode}'.`);
-  }
-
   const prefix = core.getInput('label-prefix').trim() || 'status:';
   const staleLockMinutes = optionalNumber('stale-lock-minutes') ?? 120;
   const maxFixAttempts = optionalNumber('max-fix-attempts') ?? 3;
@@ -68,7 +62,6 @@ export function readConfig(): Config {
   const { owner, repo } = context.repo;
 
   return {
-    mode,
     token: core.getInput('token', { required: true }),
     owner,
     repo,
@@ -81,8 +74,13 @@ export function readConfig(): Config {
     stateDir,
     runId,
     runUrl: `${server}/${owner}/${repo}/actions/runs/${runId}`,
-    issue: optionalNumber('issue'),
-    jobStatus: core.getInput('job-status').trim(),
+    model: core.getInput('model', { required: true }),
+    claudeVersion: core.getInput('version', { required: true }),
+    nodeVersion: core.getInput('node-version', { required: true }),
+    claudeToken: core.getInput('claude-token'),
+    // Not required here: an idle or busy tick never touches it, and should not need the
+    // secret configured to run at all. `runWorker` requires it once an issue is claimed.
+    githubToken: core.getInput('github-token'),
   };
 }
 

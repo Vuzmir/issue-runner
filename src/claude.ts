@@ -1,15 +1,13 @@
 // The Claude adapter: hands a claimed issue to the Claude CLI and lets the protocol the
 // loop left in the state directory drive everything else.
 //
-// This is a second action rather than a mode of the first, because the two answer different
-// questions. `issue-runner` decides *whether* there is work; this decides *who does it*.
-// Nothing in src/main.ts imports anything here, and that is the point: a project can adopt
-// the queue with a different worker, or with none, and this file simply goes unused.
+// This is a separate module from the claim/release flow in main.ts because the two answer
+// different questions - `issue-runner` decides *whether* there is work, this decides *how*
+// it gets done - but both run in the same process and the same bundle, so main.ts calls
+// `runWorker` directly rather than starting anything.
 //
-// It is a JavaScript action for the same reason the loop is - it runs on the Node every
-// Actions runner already embeds, so it needs no shell and assumes no platform. Spawning the
-// CLI with an argument array rather than a command line carries that one step further: no
-// shell anywhere parses the prompt, and nothing here has to be quoted for one.
+// Spawning the CLI with an argument array rather than a command line means no shell anywhere
+// parses the prompt, and nothing here has to be quoted for one.
 
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -17,6 +15,7 @@ import * as path from 'node:path';
 
 import * as core from '@actions/core';
 
+import type { WorkerTask } from './engine.js';
 import { install } from './install.js';
 import { updateNote } from './note.js';
 import { ensureNode } from './node.js';
@@ -27,19 +26,28 @@ import { USAGE_MARKER, addRun, lastRunFrom, parseTotals, usageNote, type Limits 
 const GIT_NAME = 'issue-runner';
 const GIT_EMAIL = 'issue-runner@users.noreply.github.com';
 
-async function run(): Promise<void> {
-  const issue = core.getInput('issue', { required: true });
-  const task = core.getInput('task', { required: true });
-  const model = core.getInput('model', { required: true });
+export interface WorkerParams {
+  issue: number;
+  task: WorkerTask;
+  model: string;
+  version: string;
+  nodeVersion: string;
+  claudeToken: string;
+  githubToken: string;
+  stateDir: string;
+}
+
+export async function runWorker(params: WorkerParams): Promise<void> {
+  const { issue, task, model, githubToken, claudeToken } = params;
 
   // Forward slashes throughout. The protocol hands the worker shell snippets like
   // `cat "$STATE_DIR/task"`, and a separator the shell reads as an escape character turns
   // those into silent nonsense. A no-op wherever the separator is already `/`.
-  const stateDir = core.getInput('state-dir', { required: true }).replace(/\\/g, '/');
+  const stateDir = params.stateDir.replace(/\\/g, '/');
 
   const protocol = path.join(stateDir, 'PROTOCOL.md');
   if (!fs.existsSync(protocol)) {
-    throw new Error(`No protocol at ${protocol}; this step must run after a claim, on that claim's state-dir.`);
+    throw new Error(`No protocol at ${protocol}; the worker must run on a claim's state-dir.`);
   }
 
   // Fail before spending a session on work that cannot be handed over. The branch is pushed
@@ -47,20 +55,24 @@ async function run(): Promise<void> {
   // repositories forbid Actions from opening pull requests at all - and one opened by
   // GITHUB_TOKEN starts no workflows, which would leave the loop waiting forever on checks
   // that never run.
-  const githubToken = core.getInput('github-token', { required: true });
-  const claudeToken = core.getInput('claude-token');
+  if (githubToken === '') {
+    throw new Error(
+      'Set github-token to a token belonging to a person or an app; many repositories forbid ' +
+        'Actions from opening pull requests with the default token.',
+    );
+  }
   if (claudeToken === '' && (process.env['ANTHROPIC_API_KEY'] ?? '') === '') {
     throw new Error('Set claude-token, or ANTHROPIC_API_KEY in the step environment; the CLI cannot authenticate.');
   }
 
   // Before the prompt is built, so a runner that cannot reach the download service says so
   // rather than after a claim has already been announced.
-  const executable = await install(core.getInput('version', { required: true }));
+  const executable = await install(params.version);
 
   // A skill's own script is the CLI's business, not ours - but if the shell it runs from has
   // no `node`, every one of them fails alike. Installing it here, ahead of the session, means
   // that failure never happens instead of being caught and worked around mid-session.
-  await ensureNode(core.getInput('node-version', { required: true }));
+  await ensureNode(params.nodeVersion);
 
   core.notice(`Working #${issue} (${task}) with Claude ${model}`);
 
@@ -159,7 +171,7 @@ async function run(): Promise<void> {
   if (result !== undefined) {
     const session = result;
     try {
-      await updateNote(githubToken, Number(issue), USAGE_MARKER, (previous) =>
+      await updateNote(githubToken, issue, USAGE_MARKER, (previous) =>
         usageNote(addRun(parseTotals(previous), session), lastRunFrom(session, limits, task, outcome)),
       );
     } catch (error: unknown) {
@@ -174,7 +186,3 @@ async function run(): Promise<void> {
   if (status === '') core.warning('The worker wrote no next-status; the issue will park at blocked.');
   else core.notice(`#${issue} -> ${status}`);
 }
-
-run().catch((error: unknown) => {
-  core.setFailed(error instanceof Error ? error.message : String(error));
-});

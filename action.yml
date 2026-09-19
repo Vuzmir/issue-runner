@@ -1,13 +1,11 @@
 name: 'Issue Runner'
-description: 'Walks the issue queue one issue at a time using status:* labels as the lock.'
+description: >-
+  Walks the issue queue one issue at a time using status:* labels as the lock, and hands each
+  claimed issue to Claude Code.
 
 inputs:
-  mode:
-    description: 'claim (pick and lock the next issue) or release (hand it back)'
-    required: true
-    default: 'claim'
   token:
-    description: 'Token used for the GitHub API. Needs issues:write and actions:read.'
+    description: 'Token used for the GitHub API. Needs issues:write, checks:read, actions:read.'
     required: false
     default: ${{ github.token }}
   label-prefix:
@@ -31,35 +29,59 @@ inputs:
     required: false
     default: 'false'
   force-issue:
-    description: 'claim only: take this issue instead of the next queued one.'
-    required: false
-    default: ''
-  issue:
-    description: 'release only: the issue to release.'
-    required: false
-    default: ''
-  job-status:
-    description: 'release only: the calling job status (success | failure | cancelled).'
+    description: 'Take this issue instead of the next queued one.'
     required: false
     default: ''
   state-dir:
     description: 'Directory the worker exchanges files through. Defaults to $RUNNER_TEMP/issue-runner.'
     required: false
     default: ''
+  model:
+    description: 'Which Claude model works the issue.'
+    required: false
+    default: 'sonnet'
+  version:
+    description: >-
+      Which Claude Code to run: a release channel (stable, latest) or an exact version. The
+      CLI is downloaded, checksum-verified and cached per runner, so nothing has to be
+      installed on the machine beforehand.
+    required: false
+    default: 'stable'
+  node-version:
+    description: >-
+      Which Node.js to put on PATH for the CLI's own shell commands - the run-tests skill's
+      script chief among them - as `lts`, `latest`, or an exact version. Downloaded,
+      checksum-verified and cached per runner, same as the CLI itself, so a self-hosted image
+      built only to run Actions does not have to carry one already.
+    required: false
+    default: 'lts'
+  claude-token:
+    description: >-
+      A Claude Code OAuth token, from `claude setup-token`. Leave empty only if the step
+      environment already carries ANTHROPIC_API_KEY.
+    required: false
+    default: ''
+  github-token:
+    description: >-
+      Token the worker pushes and opens the pull request with. Deliberately not defaulted to
+      github.token: many repositories forbid Actions from opening pull requests, and one
+      opened by GITHUB_TOKEN starts no workflows - so its checks would never run, and the
+      loop would wait on them forever.
+    required: true
 
 outputs:
   decision:
-    description: 'claim only: busy | idle | claimed'
+    description: 'busy | idle | claimed'
   issue:
-    description: 'claim only: the claimed issue number, empty unless decision is claimed'
+    description: 'the claimed issue number, empty unless decision is claimed'
   title:
-    description: 'claim only: the claimed issue title'
+    description: 'the claimed issue title'
   task:
-    description: 'claim only: implement | fix-checks | address-review'
+    description: 'implement | fix-checks | address-review'
   pull:
-    description: 'claim only: the pull request being worked on, empty for a fresh issue'
+    description: 'the pull request being worked on, empty for a fresh issue'
   state-dir:
-    description: 'The directory the worker reads PROTOCOL.md, issue.json and task from, and writes next-status to'
+    description: 'the directory the worker read from and wrote back to'
 
 runs:
   using: 'node24'

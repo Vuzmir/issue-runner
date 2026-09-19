@@ -122,8 +122,13 @@ async function claim(config: Config, gateway: Gateway): Promise<void> {
   if (openPull !== undefined) {
     core.warning(
       `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open ` +
-        'for it; moving it back to merging instead of starting a fresh implementation',
+        'for it; moving it to merging and running its sweep in the same tick',
     );
+
+    // Committing the relabel before anything else keeps GitHub's real label state ahead of
+    // every `setStatus` call below - `followMerging`, and `take` after it, both trust the
+    // `current` labels they are handed to know what to remove. Faking `merging` in memory
+    // without writing it would leave the real `open` label stale once either of them acts.
     await gateway.setStatus(
       decision.issue.number,
       decision.issue.labels,
@@ -132,18 +137,33 @@ async function claim(config: Config, gateway: Gateway): Promise<void> {
     await gateway.addComment(
       decision.issue.number,
       `\`issue-runner\` found PR #${openPull.number} still open for this issue, so it moved this ` +
-        `back to \`${config.labels.name('merging')}\` instead of starting a new implementation. ` +
-        'The next tick will pick up any unanswered comments or failing checks on that pull request.',
+        `back to \`${config.labels.name('merging')}\` instead of starting a new implementation.`,
     );
+
+    // The label just written makes this issue's real state match what `followMerging` expects,
+    // so the same sweep a `merging` issue gets on every tick can run on it right now instead of
+    // waiting out a full tick interval for a comment or a red check that is already sitting
+    // there waiting.
+    const nowMerging: IssueView = {
+      ...decision.issue,
+      labels: [
+        ...decision.issue.labels.filter((name) => name !== config.labels.name('open')),
+        config.labels.name('merging'),
+      ],
+    };
+    const resweep = await followMerging(gateway, [nowMerging], ctx);
+
+    if (resweep.followUp !== undefined) {
+      await take(config, gateway, ctx, resweep.followUp.issue, resweep.followUp);
+      return;
+    }
+
     core.setOutput('decision', 'idle');
     core.setOutput('issue', '');
-    core.notice(`#${decision.issue.number} redirected to merging; no work started this tick.`);
+    core.notice(`#${decision.issue.number} redirected to its pull request; no fresh implementation started.`);
     core.summary
       .addHeading('issue-runner: redirected', 3)
-      .addRaw(
-        `${link(config, decision.issue)} already has PR #${openPull.number} open, so it was moved ` +
-          `back to \`${config.labels.name('merging')}\` instead of starting a fresh implementation.`,
-      );
+      .addRaw(`${link(config, decision.issue)} already has PR #${openPull.number} open.`);
     await core.summary.write();
     return;
   }

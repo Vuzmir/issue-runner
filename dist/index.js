@@ -24704,7 +24704,7 @@ async function claim(config, gateway) {
   const openPull = await findOpenPull(gateway, decision.issue);
   if (openPull !== void 0) {
     core4.warning(
-      `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open for it; moving it back to merging instead of starting a fresh implementation`
+      `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open for it; moving it to merging and running its sweep in the same tick`
     );
     await gateway.setStatus(
       decision.issue.number,
@@ -24713,14 +24713,24 @@ async function claim(config, gateway) {
     );
     await gateway.addComment(
       decision.issue.number,
-      `\`issue-runner\` found PR #${openPull.number} still open for this issue, so it moved this back to \`${config.labels.name("merging")}\` instead of starting a new implementation. The next tick will pick up any unanswered comments or failing checks on that pull request.`
+      `\`issue-runner\` found PR #${openPull.number} still open for this issue, so it moved this back to \`${config.labels.name("merging")}\` instead of starting a new implementation.`
     );
+    const nowMerging = {
+      ...decision.issue,
+      labels: [
+        ...decision.issue.labels.filter((name) => name !== config.labels.name("open")),
+        config.labels.name("merging")
+      ]
+    };
+    const resweep = await followMerging(gateway, [nowMerging], ctx);
+    if (resweep.followUp !== void 0) {
+      await take(config, gateway, ctx, resweep.followUp.issue, resweep.followUp);
+      return;
+    }
     core4.setOutput("decision", "idle");
     core4.setOutput("issue", "");
-    core4.notice(`#${decision.issue.number} redirected to merging; no work started this tick.`);
-    core4.summary.addHeading("issue-runner: redirected", 3).addRaw(
-      `${link(config, decision.issue)} already has PR #${openPull.number} open, so it was moved back to \`${config.labels.name("merging")}\` instead of starting a fresh implementation.`
-    );
+    core4.notice(`#${decision.issue.number} redirected to its pull request; no fresh implementation started.`);
+    core4.summary.addHeading("issue-runner: redirected", 3).addRaw(`${link(config, decision.issue)} already has PR #${openPull.number} open.`);
     await core4.summary.write();
     return;
   }

@@ -4,6 +4,15 @@ You are implementing exactly one issue, unattended. Nobody is going to answer a 
 halfway through, so every phase below ends in a decision you can defend on your own: do the
 work, or stop and say why. Guessing is the one option that is never available.
 
+You are also running as a single non-interactive turn. There is no session after this one:
+nothing will read a background task's output, act on a scheduled wake-up, or resume you once
+a slow command finishes. **Run every command you need the result of in the foreground and
+wait for it, however long it takes** - a test run, a build, a `docker compose` pull. Ending
+your turn while something is still "running in the background, I'll check back" does not
+pause you; it ends the process, and whatever you were waiting on is never read. The two
+outcome files in **The contract** are the only thing that survives after you stop, so nothing
+you have not written there by then happened at all.
+
 This file is the part of the procedure that belongs to the runner and is identical in every
 repository it runs in. **Everything specific to this repository — how to run its tests, its
 conventions, its language rules — is in its own agent doc** (`AGENTS.md` or `CLAUDE.md`, at
@@ -155,6 +164,11 @@ the fix needs instead.
 tests" section) and use it, scoped to what you changed. If the repository documents no way to
 run a narrow slice, do not fall back to running everything — say so in the pull request body
 and let CI be the gate.
+
+Run it in the foreground and wait for it to finish, even if it builds an image first and
+takes several minutes. Backgrounding it and ending your turn to "check back later" is exactly
+the mistake the opening of this file warns about — there is no later, and the run's result is
+never seen.
 
 Your change is not done while its slice is red. If you cannot make it green within the issue's
 scope, that is a `blocked` outcome with the failure quoted in the comment — not a weakened

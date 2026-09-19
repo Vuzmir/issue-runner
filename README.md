@@ -126,6 +126,17 @@ Two of its inputs deserve a word:
 - **`claude-token`** is what `claude setup-token` prints. Leave it empty only if the step's
   environment already carries `ANTHROPIC_API_KEY`.
 
+The CLI runs as `claude --print`: one non-interactive turn, and no session after it. That
+matters more than it sounds - a run that backgrounds a slow command (a test suite that builds
+an image first, say) and ends its turn to "check back once it finishes" does not pause. The
+turn ends, the process exits, and nothing is ever going to check back; whatever the command
+was supposed to prove is simply never seen, and the issue parks at `status:blocked` with no
+`next-status` written. `worker/PROTOCOL.md` says this in the worker's own words, and
+`--disallowed-tools ScheduleWakeup` closes half of it at the CLI level - there is no session
+later for a scheduled wake-up to reach, so the tool has no legitimate use here. Backgrounding
+a Bash command has no matching flag to disable, since it is a parameter of the Bash tool
+rather than a tool of its own; the protocol's wording is what stands in for it.
+
 ### What it cost
 
 Every run rewrites a single comment on the issue with what that issue has cost so far -

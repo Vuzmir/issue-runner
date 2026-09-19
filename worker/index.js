@@ -47273,6 +47273,12 @@ async function run() {
     // tools cannot reach the protocol without being told about it.
     "--add-dir",
     stateDir,
+    // This is one non-interactive turn with no session after it: nothing here will ever
+    // read a scheduled wake-up, so the tool has no legitimate use and only invites the
+    // mistake the protocol warns against - ending the turn to "check back later" on
+    // something nothing is going to check.
+    "--disallowed-tools",
+    "ScheduleWakeup",
     "--output-format",
     "stream-json",
     "--verbose"

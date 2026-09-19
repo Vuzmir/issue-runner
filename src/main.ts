@@ -9,6 +9,7 @@ import {
   LOCK_MARKER,
   PR_MARKER,
   decide,
+  findOpenPull,
   followMerging,
   formatPullMarker,
   issuesWith,
@@ -113,6 +114,40 @@ async function claim(config: Config, gateway: Gateway): Promise<void> {
     return;
   }
 
+  // `followMerging` only walks issues still labelled `merging`; one moved back to `open` by
+  // hand - the normal way to retry after `blocked` - falls outside that sweep even though its
+  // pull request is still open. Catch it here, before `implement` brands a second branch and
+  // pull request onto work that already has one.
+  const openPull = await findOpenPull(gateway, decision.issue);
+  if (openPull !== undefined) {
+    core.warning(
+      `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open ` +
+        'for it; moving it back to merging instead of starting a fresh implementation',
+    );
+    await gateway.setStatus(
+      decision.issue.number,
+      decision.issue.labels,
+      config.labels.name('merging'),
+    );
+    await gateway.addComment(
+      decision.issue.number,
+      `\`issue-runner\` found PR #${openPull.number} still open for this issue, so it moved this ` +
+        `back to \`${config.labels.name('merging')}\` instead of starting a new implementation. ` +
+        'The next tick will pick up any unanswered comments or failing checks on that pull request.',
+    );
+    core.setOutput('decision', 'idle');
+    core.setOutput('issue', '');
+    core.notice(`#${decision.issue.number} redirected to merging; no work started this tick.`);
+    core.summary
+      .addHeading('issue-runner: redirected', 3)
+      .addRaw(
+        `${link(config, decision.issue)} already has PR #${openPull.number} open, so it was moved ` +
+          `back to \`${config.labels.name('merging')}\` instead of starting a fresh implementation.`,
+      );
+    await core.summary.write();
+    return;
+  }
+
   await take(config, gateway, ctx, decision.issue);
 }
 
@@ -183,22 +218,27 @@ async function release(config: Config, gateway: Gateway): Promise<void> {
     throw new Error("Input 'issue' is required when mode is 'release'.");
   }
 
+  const issue = await gateway.getIssue(config.issue);
+  if (issue === undefined) {
+    throw new Error(`Issue #${config.issue} could not be read, so it was not released.`);
+  }
+
   const declared = readStateFile(config, 'next-status');
   const pull = readStateFile(config, 'pr');
   const pullNumber = pull === undefined || pull === '' ? undefined : Number(pull);
 
   // Whether a pull request is open decides where a cancelled or failed run puts the issue:
-  // back to review, not back to the queue, because the branch already carries the work.
+  // back to review, not back to the queue, because the branch already carries the work. The
+  // worker only leaves `pr` behind once it has pushed one, so a run that never got that far -
+  // including one that was claimed as `implement` over an issue that already had one - has to
+  // fall back to the marker instead of assuming there is nothing to lose.
   const pullView =
-    pullNumber === undefined ? undefined : await gateway.getPullRequest(pullNumber);
+    pullNumber === undefined
+      ? await findOpenPull(gateway, issue)
+      : await gateway.getPullRequest(pullNumber);
   const outcome = resolveRelease(config.jobStatus, declared, pullView?.state === 'OPEN');
   if (outcome.warning !== undefined) {
     core.warning(`#${config.issue}: ${outcome.warning}`);
-  }
-
-  const issue = await gateway.getIssue(config.issue);
-  if (issue === undefined) {
-    throw new Error(`Issue #${config.issue} could not be read, so it was not released.`);
   }
 
   const target = config.labels.name(outcome.target);

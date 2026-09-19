@@ -24482,11 +24482,14 @@ async function lockIsStale(gateway, issue, ctx) {
   );
   return heldMinutes >= ctx.staleLockMinutes;
 }
-async function reclaimTarget(gateway, issue) {
+async function findOpenPull(gateway, issue) {
   const marker = parsePullMarker(await gateway.findLastMarkerComment(issue.number, PR_MARKER));
-  if (marker === void 0) return "open";
+  if (marker === void 0) return void 0;
   const pull = await gateway.getPullRequest(marker.pull);
-  return pull?.state === "OPEN" ? "merging" : "open";
+  return pull?.state === "OPEN" ? pull : void 0;
+}
+async function reclaimTarget(gateway, issue) {
+  return await findOpenPull(gateway, issue) === void 0 ? "open" : "merging";
 }
 async function reapStaleLocks(gateway, issues, ctx) {
   let reclaimed = 0;
@@ -24698,6 +24701,29 @@ async function claim(config, gateway) {
     await core4.summary.write();
     return;
   }
+  const openPull = await findOpenPull(gateway, decision.issue);
+  if (openPull !== void 0) {
+    core4.warning(
+      `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open for it; moving it back to merging instead of starting a fresh implementation`
+    );
+    await gateway.setStatus(
+      decision.issue.number,
+      decision.issue.labels,
+      config.labels.name("merging")
+    );
+    await gateway.addComment(
+      decision.issue.number,
+      `\`issue-runner\` found PR #${openPull.number} still open for this issue, so it moved this back to \`${config.labels.name("merging")}\` instead of starting a new implementation. The next tick will pick up any unanswered comments or failing checks on that pull request.`
+    );
+    core4.setOutput("decision", "idle");
+    core4.setOutput("issue", "");
+    core4.notice(`#${decision.issue.number} redirected to merging; no work started this tick.`);
+    core4.summary.addHeading("issue-runner: redirected", 3).addRaw(
+      `${link(config, decision.issue)} already has PR #${openPull.number} open, so it was moved back to \`${config.labels.name("merging")}\` instead of starting a fresh implementation.`
+    );
+    await core4.summary.write();
+    return;
+  }
   await take(config, gateway, ctx, decision.issue);
 }
 async function take(config, gateway, ctx, issue, followUp) {
@@ -24737,17 +24763,17 @@ async function release(config, gateway) {
   if (config.issue === void 0) {
     throw new Error("Input 'issue' is required when mode is 'release'.");
   }
-  const declared = readStateFile(config, "next-status");
-  const pull = readStateFile(config, "pr");
-  const pullNumber = pull === void 0 || pull === "" ? void 0 : Number(pull);
-  const pullView = pullNumber === void 0 ? void 0 : await gateway.getPullRequest(pullNumber);
-  const outcome = resolveRelease(config.jobStatus, declared, pullView?.state === "OPEN");
-  if (outcome.warning !== void 0) {
-    core4.warning(`#${config.issue}: ${outcome.warning}`);
-  }
   const issue = await gateway.getIssue(config.issue);
   if (issue === void 0) {
     throw new Error(`Issue #${config.issue} could not be read, so it was not released.`);
+  }
+  const declared = readStateFile(config, "next-status");
+  const pull = readStateFile(config, "pr");
+  const pullNumber = pull === void 0 || pull === "" ? void 0 : Number(pull);
+  const pullView = pullNumber === void 0 ? await findOpenPull(gateway, issue) : await gateway.getPullRequest(pullNumber);
+  const outcome = resolveRelease(config.jobStatus, declared, pullView?.state === "OPEN");
+  if (outcome.warning !== void 0) {
+    core4.warning(`#${config.issue}: ${outcome.warning}`);
   }
   const target = config.labels.name(outcome.target);
   await gateway.setStatus(issue.number, issue.labels, target);

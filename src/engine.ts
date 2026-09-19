@@ -254,6 +254,20 @@ async function lockIsStale(
 }
 
 /**
+ * The pull request an issue's last `PR_MARKER` points at, if it is still open.
+ *
+ * A `status:open` label is not proof that an issue is unclaimed work: a human moving it back
+ * from `blocked` - the normal way to retry - does not know from the label alone whether it
+ * still carries a pull request. This is the one place that actually asks.
+ */
+export async function findOpenPull(gateway: Gateway, issue: IssueView): Promise<PullView | undefined> {
+  const marker = parsePullMarker(await gateway.findLastMarkerComment(issue.number, PR_MARKER));
+  if (marker === undefined) return undefined;
+  const pull = await gateway.getPullRequest(marker.pull);
+  return pull?.state === 'OPEN' ? pull : undefined;
+}
+
+/**
  * Where a reclaimed issue belongs.
  *
  * An issue that already has an open pull request must go back to `merging`, not `open`:
@@ -261,10 +275,7 @@ async function lockIsStale(
  * already carrying it, and a second pull request is the one outcome nobody wants.
  */
 export async function reclaimTarget(gateway: Gateway, issue: IssueView): Promise<Status> {
-  const marker = parsePullMarker(await gateway.findLastMarkerComment(issue.number, PR_MARKER));
-  if (marker === undefined) return 'open';
-  const pull = await gateway.getPullRequest(marker.pull);
-  return pull?.state === 'OPEN' ? 'merging' : 'open';
+  return (await findOpenPull(gateway, issue)) === undefined ? 'open' : 'merging';
 }
 
 /** Returns how many issues were moved, so the caller knows to re-read the queue. */

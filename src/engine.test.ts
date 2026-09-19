@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   decide,
+  findOpenPull,
   followMerging,
   formatPullMarker,
   parseLockRunId,
@@ -427,6 +428,29 @@ describe('reclaiming an issue that already has a pull request', () => {
     });
     expect(await reapStaleLocks(gateway, [issue(1, ['status:processing'])], ctx)).toBe(1);
     expect(recorded.statuses).toEqual([{ issue: 1, target: 'status:open' }]);
+  });
+});
+
+describe('findOpenPull', () => {
+  it('finds nothing when the issue has never carried a pull request', async () => {
+    const { gateway } = fakeGateway();
+    expect(await findOpenPull(gateway, issue(1, ['status:open']))).toBeUndefined();
+  });
+
+  it('finds the pull request a marker still points at', async () => {
+    const { gateway } = fakeGateway({
+      comments: { 1: ['<!-- issue-runner:pr number=42 -->'] },
+      pulls: { 42: pull() },
+    });
+    expect(await findOpenPull(gateway, issue(1, ['status:open']))).toMatchObject({ number: 42 });
+  });
+
+  it('finds nothing once that pull request is closed', async () => {
+    const { gateway } = fakeGateway({
+      comments: { 1: ['<!-- issue-runner:pr number=42 -->'] },
+      pulls: { 42: pull({ state: 'CLOSED' }) },
+    });
+    expect(await findOpenPull(gateway, issue(1, ['status:open']))).toBeUndefined();
   });
 });
 

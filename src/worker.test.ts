@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { IssueView } from './gateway.js';
-import { PROTOCOL_NAME, publishWorkerInput } from './worker.js';
+import { PROTOCOL_NAME, WAIT_SCRIPT_NAME, publishWorkerInput } from './worker.js';
 
 const issue: IssueView = {
   number: 7,
@@ -26,6 +26,7 @@ beforeEach(() => {
   stateDir = path.join(root, 'state');
   protocol = path.join(root, 'PROTOCOL.md');
   fs.writeFileSync(protocol, '# Worker protocol\n');
+  fs.writeFileSync(path.join(root, WAIT_SCRIPT_NAME), '#!/bin/sh\n"$@"\n');
 });
 
 afterEach(() => {
@@ -57,5 +58,19 @@ describe('publishWorkerInput', () => {
     expect(() => publishWorkerInput(stateDir, issue, path.join(root, 'gone.md'))).toThrow(
       /protocol is missing/,
     );
+  });
+
+  it('copies the wait-for script in beside the protocol, executable', () => {
+    publishWorkerInput(stateDir, issue, protocol);
+    const written = path.join(stateDir, WAIT_SCRIPT_NAME);
+    expect(fs.readFileSync(written, 'utf8')).toBe('#!/bin/sh\n"$@"\n');
+    // Windows has no execute bit to assert on - same carve-out install.ts takes for the CLI
+    // binary itself.
+    if (process.platform !== 'win32') expect(fs.statSync(written).mode & 0o111).not.toBe(0);
+  });
+
+  it('fails loudly when the wait-for script is missing, same as a missing protocol', () => {
+    fs.rmSync(path.join(root, WAIT_SCRIPT_NAME));
+    expect(() => publishWorkerInput(stateDir, issue, protocol)).toThrow(/wait-for script is missing/);
   });
 });

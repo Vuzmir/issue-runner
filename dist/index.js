@@ -48090,6 +48090,7 @@ async function park(gateway, issue2, ctx, why) {
 var fs6 = __toESM(require("node:fs"));
 var path9 = __toESM(require("node:path"));
 var PROTOCOL_NAME = "PROTOCOL.md";
+var WAIT_SCRIPT_NAME = "wait-for.sh";
 function protocolSource() {
   return path9.join(__dirname, "..", PROTOCOL_NAME);
 }
@@ -48097,9 +48098,15 @@ function publishWorkerInput(stateDir, issue2, source, followUp) {
   if (!fs6.existsSync(source)) {
     throw new Error(`The worker protocol is missing at ${source}; this action is incomplete.`);
   }
+  const waitScript = path9.join(path9.dirname(source), WAIT_SCRIPT_NAME);
+  if (!fs6.existsSync(waitScript)) {
+    throw new Error(`The wait-for script is missing at ${waitScript}; this action is incomplete.`);
+  }
   fs6.mkdirSync(stateDir, { recursive: true });
   const write = (name, body) => fs6.writeFileSync(path9.join(stateDir, name), body);
   fs6.copyFileSync(source, path9.join(stateDir, PROTOCOL_NAME));
+  fs6.copyFileSync(waitScript, path9.join(stateDir, WAIT_SCRIPT_NAME));
+  if (process.platform !== "win32") fs6.chmodSync(path9.join(stateDir, WAIT_SCRIPT_NAME), 493);
   write("issue.json", JSON.stringify(issue2, null, 2));
   write("task", followUp?.task ?? "implement");
   if (followUp === void 0) return;

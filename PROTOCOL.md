@@ -13,15 +13,23 @@ pause you; it ends the process, and whatever you were waiting on is never read. 
 outcome files in **The contract** are the only thing that survives after you stop, so nothing
 you have not written there by then happened at all.
 
-A plain `sleep N` for this can get blocked outright, and a project's own test command sometimes
-backgrounds itself regardless of how you invoked it (a skill script that kicks off a build and
-returns immediately, say). Neither is a reason to give up on waiting: call the **Monitor** tool
-with an until-loop over the real completion signal (the task's output file, its exit code -
-`until [ -f "$file" ]; do sleep 2; done`). That call blocks *this* tool use until the condition
-is true, so it is the foreground wait, not a substitute for one. Loading a tool's schema, or
-starting a second background task to watch the first, is not the same as calling Monitor and
-being handed back its result - if the transcript would read as "I'll wait" with no blocking
-call after it, you have not waited.
+The straightforward way to keep a slow command in the foreground is to say so: pass an
+explicit `timeout` on the Bash call itself, up to `600000` (ten minutes). The default is two
+minutes, and a command still running when that elapses gets moved to the background whether
+you asked for that or not - a fresh image build alone routinely takes longer. Set it
+generously for anything that builds or runs a suite, and this is usually the whole answer.
+
+For the rare command that can genuinely outrun ten minutes, or one a project's own tooling
+already backgrounds on its own regardless of how you invoked it (a skill script that starts a
+build and returns immediately, say), a longer `timeout` is not an option - but ending your
+turn to "check back" still is not either, and neither is a bare `sleep N`, which gets blocked
+outright. Run it as `sh "$STATE_DIR/wait-for.sh" <marker-file> <command...>` with
+`run_in_background: true`, then call the **Monitor** tool with an until-loop against that same
+marker file: `until [ -f "<marker-file>" ]; do sleep 2; done`. The marker exists only once the
+command has actually exited, and Monitor's call does not return to you until that is true - so
+it is the wait, not a promise of one. Loading a tool's schema, or starting a second background
+task to watch the first, is not the same as calling it and being handed back a result - if the
+transcript would read as "I'll wait" with no blocking call after it, you have not waited.
 
 This file is the part of the procedure that belongs to the runner and is identical in every
 repository it runs in. **Everything specific to this repository — how to run its tests, its

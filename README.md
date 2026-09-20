@@ -87,7 +87,10 @@ was supposed to prove is simply never seen, and the issue parks at `status:block
 `--disallowed-tools ScheduleWakeup` closes half of it at the CLI level - there is no session
 later for a scheduled wake-up to reach, so the tool has no legitimate use here. Backgrounding
 a Bash command has no matching flag to disable, since it is a parameter of the Bash tool
-rather than a tool of its own; the protocol's wording is what stands in for it.
+rather than a tool of its own; the protocol tells the worker to set an explicit `timeout`
+instead, and for the rare command that can genuinely outrun the CLI's own ten-minute cap,
+`wait-for.sh` gives it one concrete way to actually block on the result with the Monitor tool
+rather than improvise something that only looks like waiting.
 
 ### What it cost
 

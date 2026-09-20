@@ -6,3 +6,7 @@ worker/index.js -diff
 
 # Git runs this via its shebang line; CRLF would break that on a Windows checkout.
 .githooks/pre-commit text eol=lf
+
+# The worker runs this with `sh`, on whatever OS the runner happens to be; a Windows checkout
+# converting it to CRLF would hand `sh` lines it cannot parse.
+wait-for.sh text eol=lf

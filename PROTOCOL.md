@@ -13,6 +13,16 @@ pause you; it ends the process, and whatever you were waiting on is never read. 
 outcome files in **The contract** are the only thing that survives after you stop, so nothing
 you have not written there by then happened at all.
 
+A plain `sleep N` for this can get blocked outright, and a project's own test command sometimes
+backgrounds itself regardless of how you invoked it (a skill script that kicks off a build and
+returns immediately, say). Neither is a reason to give up on waiting: call the **Monitor** tool
+with an until-loop over the real completion signal (the task's output file, its exit code -
+`until [ -f "$file" ]; do sleep 2; done`). That call blocks *this* tool use until the condition
+is true, so it is the foreground wait, not a substitute for one. Loading a tool's schema, or
+starting a second background task to watch the first, is not the same as calling Monitor and
+being handed back its result - if the transcript would read as "I'll wait" with no blocking
+call after it, you have not waited.
+
 This file is the part of the procedure that belongs to the runner and is identical in every
 repository it runs in. **Everything specific to this repository — how to run its tests, its
 conventions, its language rules — is in its own agent doc** (`AGENTS.md` or `CLAUDE.md`, at
@@ -168,7 +178,9 @@ and let CI be the gate.
 Run it in the foreground and wait for it to finish, even if it builds an image first and
 takes several minutes. Backgrounding it and ending your turn to "check back later" is exactly
 the mistake the opening of this file warns about — there is no later, and the run's result is
-never seen.
+never seen. If the command itself runs as a background task no matter how you call it, or a
+foreground `sleep` gets blocked, that means block on it with Monitor instead, as the opening
+of this file says — it does not mean the wait is now someone else's problem.
 
 Your change is not done while its slice is red. If you cannot make it green within the issue's
 scope, that is a `blocked` outcome with the failure quoted in the comment — not a weakened

@@ -47616,6 +47616,23 @@ var GitHubGateway = class {
     }
     return void 0;
   }
+  async issueComments(issue2) {
+    const conversation = await withRetry(
+      `list comments on #${issue2}`,
+      () => this.api.paginate(this.api.rest.issues.listComments, {
+        ...this.base,
+        issue_number: issue2,
+        per_page: 100
+      })
+    );
+    return conversation.filter((comment) => isHuman(comment.user?.type, comment.user?.login, comment.body)).map((comment) => ({
+      kind: "comment",
+      author: comment.user?.login ?? "",
+      createdAt: comment.created_at,
+      body: comment.body ?? "",
+      url: comment.html_url
+    }));
+  }
   async labelAppliedAt(issue2, label) {
     const events2 = await withRetry(
       `list events on #${issue2}`,
@@ -48094,7 +48111,7 @@ var WAIT_SCRIPT_NAME = "wait-for.sh";
 function protocolSource() {
   return path9.join(__dirname, "..", PROTOCOL_NAME);
 }
-function publishWorkerInput(stateDir, issue2, source, followUp) {
+function publishWorkerInput(stateDir, issue2, source, priorComments = [], followUp) {
   if (!fs6.existsSync(source)) {
     throw new Error(`The worker protocol is missing at ${source}; this action is incomplete.`);
   }
@@ -48109,6 +48126,7 @@ function publishWorkerInput(stateDir, issue2, source, followUp) {
   if (process.platform !== "win32") fs6.chmodSync(path9.join(stateDir, WAIT_SCRIPT_NAME), 493);
   write("issue.json", JSON.stringify(issue2, null, 2));
   write("task", followUp?.task ?? "implement");
+  write("issue-comments.json", JSON.stringify(priorComments, null, 2));
   if (followUp === void 0) return;
   write("pr.json", JSON.stringify(followUp.pull, null, 2));
   write("checks.json", JSON.stringify(followUp.failedChecks, null, 2));
@@ -48230,6 +48248,7 @@ async function take(config, gateway, ctx, issue2, followUp) {
 Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}](${config.runUrl}).` + (followUp === void 0 ? "" : ` Reason: ${followUp.reason}.`)
   );
   let input;
+  let priorComments = [];
   if (followUp !== void 0) {
     await gateway.addComment(
       issue2.number,
@@ -48243,8 +48262,10 @@ Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}]
       comments: followUp.comments,
       checksLog: followUp.failedChecks.length > 0 ? await gateway.failedJobLogs(followUp.pull.headSha) : ""
     };
+  } else {
+    priorComments = await gateway.issueComments(issue2.number);
   }
-  publishWorkerInput(config.stateDir, issue2, protocolSource(), input);
+  publishWorkerInput(config.stateDir, issue2, protocolSource(), priorComments, input);
   const task = input?.task ?? "implement";
   core7.setOutput("decision", "claimed");
   core7.setOutput("issue", String(issue2.number));

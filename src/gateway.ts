@@ -131,6 +131,15 @@ export interface Gateway {
   failedJobLogs(sha: string): Promise<string>;
   /** Comments and reviews a person left on a pull request after `since`. */
   humanCommentsSince(pull: number, since: string): Promise<CommentView[]>;
+  /**
+   * Every comment a person left on the issue itself, oldest first.
+   *
+   * A fresh `implement` claim has no watermark to filter by - unlike a pull request, an issue
+   * can go `blocked` and come back `open` with a question answered in between, and that answer
+   * lives only in this thread. Handed to the worker in full so a reopened issue is read as a
+   * continuation, not restarted from the title and body alone.
+   */
+  issueComments(issue: number): Promise<CommentView[]>;
 }
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -294,6 +303,25 @@ export class GitHubGateway implements Gateway {
       if (body?.startsWith(marker)) return body;
     }
     return undefined;
+  }
+
+  async issueComments(issue: number): Promise<CommentView[]> {
+    const conversation = await withRetry(`list comments on #${issue}`, () =>
+      this.api.paginate(this.api.rest.issues.listComments, {
+        ...this.base,
+        issue_number: issue,
+        per_page: 100,
+      }),
+    );
+    return conversation
+      .filter((comment) => isHuman(comment.user?.type, comment.user?.login, comment.body))
+      .map((comment) => ({
+        kind: 'comment' as const,
+        author: comment.user?.login ?? '',
+        createdAt: comment.created_at,
+        body: comment.body ?? '',
+        url: comment.html_url,
+      }));
   }
 
   async labelAppliedAt(issue: number, label: string): Promise<Date | undefined> {

@@ -44,8 +44,9 @@ The runner left everything you need on disk, in the directory this file is sitti
 branch on it:
 
 ```bash
-cat "$STATE_DIR/task"         # implement | fix-checks | address-review
-cat "$STATE_DIR/issue.json"   # { number, title, body, labels, url, author, updatedAt }
+cat "$STATE_DIR/task"             # implement | fix-checks | address-review
+cat "$STATE_DIR/issue.json"       # { number, title, body, labels, url, author, updatedAt }
+cat "$STATE_DIR/issue-comments.json"  # every human comment on the issue itself, oldest first
 ```
 
 | task             | what happened                                                 | where you work        |
@@ -53,6 +54,12 @@ cat "$STATE_DIR/issue.json"   # { number, title, body, labels, url, author, upda
 | `implement`      | a fresh issue came off the queue                               | a new branch          |
 | `fix-checks`     | your pull request is open and CI went red                      | that pull request     |
 | `address-review` | a person wrote something on your pull request and is waiting   | that pull request     |
+
+`issue-comments.json` is not just the original issue text: if this issue was claimed before -
+blocked on a question, then reopened or relabeled back to `open` - a person's answer sits in
+there, after whatever the runner or a previous run itself posted. It is empty only when nobody
+has said anything since the issue was opened. Read it before Phase 1 decides anything; a
+question that already has an answer in this file must not be asked again.
 
 The two follow-up tasks come with the answers already gathered, so you never have to go
 asking GitHub what CI thinks:
@@ -119,8 +126,11 @@ The judgement that still applies on a follow-up is narrower, and it is about sco
 
 Everything below in this phase is for `implement`.
 
-Read the issue, then read the code it touches. Before writing anything, answer one question:
-**is there a change here that you can verify is correct?**
+Read the issue, then `issue-comments.json`, then the code it touches. If a prior run asked a
+question there and a person answered it, treat that answer as the current instruction, not the
+original issue body alone - the label being `open` again means it is worth trying, not that the
+conversation never happened. Before writing anything, answer one question: **is there a change
+here that you can verify is correct?**
 
 Write `blocked`, comment on the issue with your reasoning, and stop, when:
 

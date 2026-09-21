@@ -76,6 +76,7 @@ interface FakeOptions {
   labelAppliedAt?: Record<number, Date>;
   checks?: ChecksView;
   humanComments?: CommentView[];
+  issueComments?: CommentView[];
 }
 
 interface Recorded {
@@ -108,6 +109,7 @@ function fakeGateway(options: FakeOptions = {}): { gateway: Gateway; recorded: R
     checksFor: async () => options.checks ?? { verdict: 'none', failed: [] },
     failedJobLogs: async () => 'log tail',
     humanCommentsSince: async () => options.humanComments ?? [],
+    issueComments: async () => options.issueComments ?? [],
   };
 
   return { gateway, recorded };

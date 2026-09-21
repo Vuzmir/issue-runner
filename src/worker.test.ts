@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { IssueView } from './gateway.js';
+import type { CommentView, IssueView } from './gateway.js';
 import { PROTOCOL_NAME, WAIT_SCRIPT_NAME, publishWorkerInput } from './worker.js';
 
 const issue: IssueView = {
@@ -72,5 +72,29 @@ describe('publishWorkerInput', () => {
   it('fails loudly when the wait-for script is missing, same as a missing protocol', () => {
     fs.rmSync(path.join(root, WAIT_SCRIPT_NAME));
     expect(() => publishWorkerInput(stateDir, issue, protocol)).toThrow(/wait-for script is missing/);
+  });
+
+  it('writes an empty comment thread when none is handed in', () => {
+    publishWorkerInput(stateDir, issue, protocol);
+    expect(JSON.parse(fs.readFileSync(path.join(stateDir, 'issue-comments.json'), 'utf8'))).toEqual(
+      [],
+    );
+  });
+
+  it('carries the issue thread so a reopened issue is read as a continuation, not restarted', () => {
+    const priorComments: CommentView[] = [
+      {
+        kind: 'comment',
+        author: 'someone',
+        createdAt: '2026-09-19T09:00:00Z',
+        body: 'just clean all the dead code',
+        url: 'https://github.test/issues/7#c1',
+      },
+    ];
+    publishWorkerInput(stateDir, issue, protocol, priorComments);
+    const written: CommentView[] = JSON.parse(
+      fs.readFileSync(path.join(stateDir, 'issue-comments.json'), 'utf8'),
+    );
+    expect(written).toEqual(priorComments);
   });
 });

@@ -46,6 +46,7 @@ export function publishWorkerInput(
   stateDir: string,
   issue: IssueView,
   source: string,
+  priorComments: CommentView[] = [],
   followUp?: FollowUpInput,
 ): void {
   if (!fs.existsSync(source)) {
@@ -70,6 +71,7 @@ export function publishWorkerInput(
   if (process.platform !== 'win32') fs.chmodSync(path.join(stateDir, WAIT_SCRIPT_NAME), 0o755);
   write('issue.json', JSON.stringify(issue, null, 2));
   write('task', followUp?.task ?? 'implement');
+  write('issue-comments.json', JSON.stringify(priorComments, null, 2));
 
   if (followUp === undefined) return;
 

@@ -5,7 +5,7 @@ import * as core from '@actions/core';
 
 import { runWorker } from './claude.js';
 import { type Config, issueUrl, readConfig } from './config.js';
-import { GitHubGateway, type Gateway, type IssueView } from './gateway.js';
+import { GitHubGateway, type CommentView, type Gateway, type IssueView } from './gateway.js';
 import {
   LOCK_MARKER,
   PR_MARKER,
@@ -196,6 +196,7 @@ async function take(
   );
 
   let input: FollowUpInput | undefined;
+  let priorComments: CommentView[] = [];
   if (followUp !== undefined) {
     // The watermark moves before the work, not after. A run that dies must not make the next
     // tick answer the same comment again or spend the same fix attempt twice.
@@ -215,9 +216,15 @@ async function take(
           ? await gateway.failedJobLogs(followUp.pull.headSha)
           : '',
     };
+  } else {
+    // A plain `implement` claim has no pull request yet to carry a watermark, and an issue can
+    // go `blocked` and come back `open` - reopened, or just relabeled - with a person's answer
+    // sitting in the thread in between. Without this, the worker would only ever see the
+    // title and body, as if the issue had never been touched.
+    priorComments = await gateway.issueComments(issue.number);
   }
 
-  publishWorkerInput(config.stateDir, issue, protocolSource(), input);
+  publishWorkerInput(config.stateDir, issue, protocolSource(), priorComments, input);
 
   const task = input?.task ?? 'implement';
   core.setOutput('decision', 'claimed');

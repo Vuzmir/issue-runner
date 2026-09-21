@@ -38,7 +38,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: yvz-dmr/issue-runner@v1
+      - uses: Vuzmir/issue-runner@v1
         with:
           model: sonnet
           claude-token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

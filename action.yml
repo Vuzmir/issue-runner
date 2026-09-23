@@ -40,6 +40,14 @@ inputs:
     description: 'Which Claude model works the issue.'
     required: false
     default: 'sonnet'
+  model-label-prefix:
+    description: >-
+      An issue labelled with this prefix plus a model - `model:opus4.8`, `model:opus5.0`,
+      `model:claude-opus-5-5` - is worked with that model instead of `model`. The short form
+      `<family><major>.<minor>` is spelled out as `claude-<family>-<major>-<minor>`; anything
+      else goes to the CLI as written.
+    required: false
+    default: 'model:'
   version:
     description: >-
       Which Claude Code to run: a release channel (stable, latest) or an exact version. The

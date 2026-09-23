@@ -20,6 +20,7 @@ import {
   type EngineContext,
   type FollowUp,
 } from './engine.js';
+import { chooseModel } from './model.js';
 import { protocolSource, publishWorkerInput, type FollowUpInput } from './worker.js';
 
 function contextOf(config: Config): EngineContext {
@@ -227,6 +228,10 @@ async function take(
   publishWorkerInput(config.stateDir, issue, protocolSource(), priorComments, input);
 
   const task = input?.task ?? 'implement';
+  const model = chooseModel(issue.labels, config.modelLabelPrefix, config.model);
+  if (model.warning !== undefined) core.warning(`#${issue.number} ${model.warning}`);
+  if (model.label !== undefined) core.info(`#${issue.number} is labelled \`${model.label}\`; using ${model.model}`);
+
   core.setOutput('decision', 'claimed');
   core.setOutput('issue', String(issue.number));
   core.setOutput('title', issue.title);
@@ -246,7 +251,7 @@ async function take(
     await runWorker({
       issue: issue.number,
       task,
-      model: config.model,
+      model: model.model,
       version: config.claudeVersion,
       nodeVersion: config.nodeVersion,
       claudeToken: config.claudeToken,

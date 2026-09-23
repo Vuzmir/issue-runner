@@ -2,6 +2,7 @@ import * as core from '@actions/core';
 import { getOctokit } from '@actions/github';
 
 import type { Config } from './config.js';
+import { MODEL_LABEL_DEFINITIONS } from './model.js';
 import { STATUS_DEFINITIONS, STATUS_NAMES, type StatusLabels } from './statuses.js';
 
 export interface IssueView {
@@ -185,6 +186,7 @@ export class GitHubGateway implements Gateway {
   private readonly owner: string;
   private readonly repo: string;
   private readonly labels: StatusLabels;
+  private readonly modelLabelPrefix: string;
   private readonly dryRun: boolean;
 
   constructor(config: Config) {
@@ -192,6 +194,7 @@ export class GitHubGateway implements Gateway {
     this.owner = config.owner;
     this.repo = config.repo;
     this.labels = config.labels;
+    this.modelLabelPrefix = config.modelLabelPrefix;
     this.dryRun = config.dryRun;
   }
 
@@ -218,6 +221,21 @@ export class GitHubGateway implements Gateway {
       if (present.has(name)) continue;
       if (this.skip(`creating label ${name}`)) continue;
       const definition = STATUS_DEFINITIONS[status];
+      core.info(`creating missing label: ${name}`);
+      await withRetry(`create label ${name}`, () =>
+        this.api.rest.issues.createLabel({
+          ...this.base,
+          name,
+          color: definition.color,
+          description: definition.description,
+        }),
+      );
+    }
+
+    for (const [short, definition] of Object.entries(MODEL_LABEL_DEFINITIONS)) {
+      const name = `${this.modelLabelPrefix}${short}`;
+      if (present.has(name)) continue;
+      if (this.skip(`creating label ${name}`)) continue;
       core.info(`creating missing label: ${name}`);
       await withRetry(`create label ${name}`, () =>
         this.api.rest.issues.createLabel({

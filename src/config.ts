@@ -20,6 +20,7 @@ export interface Config {
   runUrl: string;
   /** worker */
   model: string;
+  modelLabelPrefix: string;
   claudeVersion: string;
   nodeVersion: string;
   claudeToken: string;
@@ -75,6 +76,7 @@ export function readConfig(): Config {
     runId,
     runUrl: `${server}/${owner}/${repo}/actions/runs/${runId}`,
     model: core.getInput('model', { required: true }),
+    modelLabelPrefix: core.getInput('model-label-prefix').trim() || 'model:',
     claudeVersion: core.getInput('version', { required: true }),
     nodeVersion: core.getInput('node-version', { required: true }),
     claudeToken: core.getInput('claude-token'),

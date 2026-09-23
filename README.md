@@ -300,7 +300,8 @@ Read $STATE_DIR/PROTOCOL.md and follow it. The claimed issue is $STATE_DIR/issue
 | `dry-run`             | `false`          | decide and report, write nothing back to GitHub            |
 | `force-issue`         | -                | take this issue instead of the next queued one             |
 | `state-dir`           | `$RUNNER_TEMP/…` | the directory the worker exchanges files through            |
-| `model`               | `sonnet`         | which Claude model works the issue                          |
+| `model`               | `sonnet`         | which Claude model works the issue, unless it has a model label |
+| `model-label-prefix`  | `model:`         | `model:opus4.8` / `model:opus5.0` on an issue picks its model (`claude-opus-4-8`, `claude-opus-5`); other values go to `--model` as written; `model:opus5.5`, `model:opus5.0`, `model:opus4.8` and `model:haiku4.5` are created automatically like the `status:*` labels |
 | `version`             | `stable`         | which Claude Code CLI to run: a channel or an exact version |
 | `node-version`        | `lts`            | which Node.js to put on PATH for the CLI's own commands     |
 | `claude-token`        | -                | from `claude setup-token`; leave empty to use `ANTHROPIC_API_KEY` |

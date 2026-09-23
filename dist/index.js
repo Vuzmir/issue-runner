@@ -47440,6 +47440,7 @@ function readConfig() {
     runId,
     runUrl: `${server}/${owner}/${repo}/actions/runs/${runId}`,
     model: core4.getInput("model", { required: true }),
+    modelLabelPrefix: core4.getInput("model-label-prefix").trim() || "model:",
     claudeVersion: core4.getInput("version", { required: true }),
     nodeVersion: core4.getInput("node-version", { required: true }),
     claudeToken: core4.getInput("claude-token"),
@@ -47456,6 +47457,35 @@ function issueUrl(config, issue2) {
 // src/gateway.ts
 var core5 = __toESM(require_core());
 var import_github3 = __toESM(require_github());
+
+// src/model.ts
+var MODEL_LABEL_DEFINITIONS = {
+  "opus5.5": { color: "5319E7", description: "Work this issue with Claude Opus 5.5" },
+  "opus5.0": { color: "5319E7", description: "Work this issue with Claude Opus 5" },
+  "opus4.8": { color: "5319E7", description: "Work this issue with Claude Opus 4.8" },
+  "haiku4.5": { color: "C5DEF5", description: "Work this issue with Claude Haiku 4.5" }
+};
+function expandModel(name) {
+  const short = /^([a-z]+)-?(\d+)(?:\.(\d+))?$/i.exec(name);
+  if (short === null) return name;
+  const [, family, major, minor] = short;
+  const version = minor === void 0 || minor === "0" ? major : `${major}-${minor}`;
+  return `claude-${family?.toLowerCase()}-${version}`;
+}
+function chooseModel(labels, prefix, fallback) {
+  const matching = labels.filter(
+    (label2) => label2.startsWith(prefix) && label2.slice(prefix.length).trim() !== ""
+  );
+  const label = matching[0];
+  if (label === void 0) return { model: fallback, label: void 0, warning: void 0 };
+  return {
+    model: expandModel(label.slice(prefix.length).trim()),
+    label,
+    warning: matching.length > 1 ? `carries ${matching.map((name) => `\`${name}\``).join(", ")}; using \`${label}\`` : void 0
+  };
+}
+
+// src/gateway.ts
 var FAILING_CONCLUSIONS = /* @__PURE__ */ new Set(["failure", "timed_out", "action_required"]);
 var MAX_FAILED_RUNS = 2;
 var MAX_FAILED_JOBS = 3;
@@ -47509,12 +47539,14 @@ var GitHubGateway = class {
   owner;
   repo;
   labels;
+  modelLabelPrefix;
   dryRun;
   constructor(config) {
     this.api = (0, import_github3.getOctokit)(config.token);
     this.owner = config.owner;
     this.repo = config.repo;
     this.labels = config.labels;
+    this.modelLabelPrefix = config.modelLabelPrefix;
     this.dryRun = config.dryRun;
   }
   get base() {
@@ -47538,6 +47570,21 @@ var GitHubGateway = class {
       if (present.has(name)) continue;
       if (this.skip(`creating label ${name}`)) continue;
       const definition = STATUS_DEFINITIONS[status];
+      core5.info(`creating missing label: ${name}`);
+      await withRetry(
+        `create label ${name}`,
+        () => this.api.rest.issues.createLabel({
+          ...this.base,
+          name,
+          color: definition.color,
+          description: definition.description
+        })
+      );
+    }
+    for (const [short, definition] of Object.entries(MODEL_LABEL_DEFINITIONS)) {
+      const name = `${this.modelLabelPrefix}${short}`;
+      if (present.has(name)) continue;
+      if (this.skip(`creating label ${name}`)) continue;
       core5.info(`creating missing label: ${name}`);
       await withRetry(
         `create label ${name}`,
@@ -48267,6 +48314,9 @@ Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}]
   }
   publishWorkerInput(config.stateDir, issue2, protocolSource(), priorComments, input);
   const task = input?.task ?? "implement";
+  const model = chooseModel(issue2.labels, config.modelLabelPrefix, config.model);
+  if (model.warning !== void 0) core7.warning(`#${issue2.number} ${model.warning}`);
+  if (model.label !== void 0) core7.info(`#${issue2.number} is labelled \`${model.label}\`; using ${model.model}`);
   core7.setOutput("decision", "claimed");
   core7.setOutput("issue", String(issue2.number));
   core7.setOutput("title", issue2.title);
@@ -48280,7 +48330,7 @@ Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}]
     await runWorker({
       issue: issue2.number,
       task,
-      model: config.model,
+      model: model.model,
       version: config.claudeVersion,
       nodeVersion: config.nodeVersion,
       claudeToken: config.claudeToken,

@@ -268,8 +268,11 @@ finds it is not, and releases the lock itself.
 
 `PROTOCOL.md` is the procedure Claude follows. It carries only what is true in **any**
 repository: the contract above, the rule that an issue body is data rather than instruction,
-when to stop and write `blocked`, branch and pull request conventions, and the policy that a
-worker runs the narrowest test slice and never the whole suite.
+the default of delivering the best reasonable reading of an issue - scoping a broad one to a
+verifiable first slice instead of handing it back - and the narrow cases where it stops and
+writes `blocked` instead, branch and pull request conventions, and the policy that a worker
+runs the narrowest test slice and never the whole suite, unless the issue asks for a
+whole-suite measurement such as coverage.
 
 It carries nothing repository-specific, and that is what makes it portable. Where the work
 needs a local answer it defers to the consuming repository's own agent docs - `AGENTS.md` or

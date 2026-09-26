@@ -189,6 +189,15 @@ describe('resolveRelease', () => {
     expect(resolveRelease('success', 'done').target).toBe('done');
     expect(resolveRelease('success', 'open').target).toBe('open');
   });
+
+  it('requeues a run that hit a Claude usage limit rather than marking it failed', () => {
+    const outcome = resolveRelease('rate-limited', undefined, false);
+    expect(outcome.target).toBe('open');
+  });
+
+  it('sends a rate-limited run back to merging instead of requeueing the issue, when a pull request is already open', () => {
+    expect(resolveRelease('rate-limited', undefined, true).target).toBe('merging');
+  });
 });
 
 describe('reapStaleLocks', () => {

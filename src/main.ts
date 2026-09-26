@@ -3,7 +3,8 @@ import * as path from 'node:path';
 
 import * as core from '@actions/core';
 
-import { runWorker } from './claude.js';
+import { UsageLimitError, runWorker } from './claude.js';
+import { currentBranch, salvagePartialWork } from './salvage.js';
 import { type Config, issueUrl, readConfig } from './config.js';
 import { GitHubGateway, type CommentView, type Gateway, type IssueView } from './gateway.js';
 import {
@@ -39,6 +40,13 @@ function readStateFile(config: Config, name: string): string | undefined {
   const file = path.join(config.stateDir, name);
   if (!fs.existsSync(file)) return undefined;
   return fs.readFileSync(file, 'utf8').trim();
+}
+
+/** Writes an outcome file the worker did not get to - only used for a salvaged usage-limit
+ * run, so `release` below reads the same contract it always does. */
+function writeStateFile(config: Config, name: string, value: string): void {
+  fs.mkdirSync(config.stateDir, { recursive: true });
+  fs.writeFileSync(path.join(config.stateDir, name), value);
 }
 
 function link(config: Config, issue: IssueView): string {
@@ -246,7 +254,11 @@ async function take(
   // Worked in the same process as the claim, rather than as a separate step: there is no
   // longer a job boundary between them, so a failure here is caught rather than left to end
   // the run - the issue still has to be released either way.
-  let jobStatus: 'success' | 'failure' = 'success';
+  let jobStatus: 'success' | 'failure' | 'rate-limited' = 'success';
+  // Read before the worker runs: it is the "never push here directly" branch a salvage below
+  // compares against, which is only meaningful against the state the workspace started in.
+  const workspace = process.env['GITHUB_WORKSPACE'] ?? process.cwd();
+  const initialBranch = currentBranch(workspace);
   try {
     await runWorker({
       issue: issue.number,
@@ -259,8 +271,35 @@ async function take(
       stateDir: config.stateDir,
     });
   } catch (error: unknown) {
-    jobStatus = 'failure';
-    core.error(error instanceof Error ? error.message : String(error));
+    if (error instanceof UsageLimitError) {
+      jobStatus = 'rate-limited';
+      core.warning(error.message);
+
+      // The worker never reached Phase 4, but whatever it had written before the limit hit is
+      // still sitting in the workspace. Committing it here is the difference between a usage
+      // limit costing a requeue and it costing the diff too.
+      const salvage = await salvagePartialWork(gateway, {
+        cwd: workspace,
+        issue,
+        task,
+        initialBranch,
+        existingPull:
+          followUp === undefined ? undefined : { number: followUp.pull.number, headRef: followUp.pull.headRef },
+        reason: error.message,
+        owner: config.owner,
+        repo: config.repo,
+        githubToken: config.githubToken,
+      });
+      if (salvage.pull !== undefined) {
+        // Same contract the worker itself would have written for `merging` - `release` below
+        // does not need to know this came from a salvage rather than a finished session.
+        writeStateFile(config, 'next-status', 'merging');
+        writeStateFile(config, 'pr', String(salvage.pull.number));
+      }
+    } else {
+      jobStatus = 'failure';
+      core.error(error instanceof Error ? error.message : String(error));
+    }
   }
 
   await release(config, gateway, issue.number, jobStatus);
@@ -268,7 +307,8 @@ async function take(
   // The issue is already released and labelled correctly above; failing the run after that is
   // purely so a failed working session stays visible in the Actions UI and to anything
   // watching run status, rather than reporting green on a run that had to fall back to
-  // `status:failed` or hand the pull request back unfinished.
+  // `status:failed` or hand the pull request back unfinished. A usage limit is neither: it is
+  // requeued rather than failed, and nobody needs the run flagged red over it.
   if (jobStatus === 'failure') {
     core.setFailed(`Working #${issue.number} failed.`);
   }
@@ -280,7 +320,7 @@ async function release(
   config: Config,
   gateway: Gateway,
   issueNumber: number,
-  jobStatus: 'success' | 'failure',
+  jobStatus: 'success' | 'failure' | 'rate-limited',
 ): Promise<void> {
   const issue = await gateway.getIssue(issueNumber);
   if (issue === undefined) {

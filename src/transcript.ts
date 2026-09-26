@@ -48,6 +48,39 @@ export interface StreamEvent {
   modelUsage?: Record<string, ModelUsage>;
   rate_limit_info?: RateLimitInfo;
   message?: { content?: ContentBlock[] };
+  /** Set on a `result` event whose turn ended in an error - which `subtype` alone does not
+   * reliably say: the CLI is known to report `subtype: "success"` on API-level failures. */
+  is_error?: boolean;
+  /** The CLI's own prose summary of what happened, carried on `result` events. On a hard API
+   * failure this is the error text itself rather than anything the model wrote. */
+  result?: string;
+  /** Present on newer CLI builds when a `result` event ends on an API error; not to be
+   * confused with `subtype`, which the CLI does not yet derive from it. */
+  terminal_reason?: string;
+  /** The HTTP status the API rejected the request with, when `terminal_reason` is `api_error`. */
+  api_error_status?: number;
+}
+
+/** HTTP statuses the API uses for "try again later" rather than "this request is wrong". */
+const RETRYABLE_API_STATUSES = new Set([429, 503, 529]);
+
+/**
+ * Known-bad but not-our-fault: the account ran out of usage window, or the API is rate
+ * limiting or overloaded. None of that is something a retry-later run can fix by trying
+ * harder, and none of it is the sort of bug a person needs to look at before requeueing.
+ *
+ * The CLI's own `subtype` cannot be trusted for this - it is documented to report
+ * `"success"` on exactly this class of failure (anthropics/claude-code#79500) - so this
+ * reads `is_error`, the newer `terminal_reason`/`api_error_status` pair, and, failing both,
+ * the prose the CLI leaves in `result`.
+ */
+export function isCapacityFailure(event: StreamEvent | undefined): boolean {
+  if (event === undefined || event.type !== 'result' || event.is_error !== true) return false;
+  if (event.terminal_reason === 'api_error' && RETRYABLE_API_STATUSES.has(event.api_error_status ?? 0)) {
+    return true;
+  }
+  const text = event.result ?? '';
+  return /^Claude AI usage limit reached\b/i.test(text) || /^API Error: (Rate limit reached|Overloaded)\b/i.test(text);
 }
 
 export function summarize(value: unknown): string {

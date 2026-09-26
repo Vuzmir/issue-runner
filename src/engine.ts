@@ -179,6 +179,21 @@ export function resolveRelease(
             target: 'failed',
             reason: 'The run failed. Fix the cause and relabel it queued to retry.',
           };
+    case 'rate-limited':
+      // Not the run's fault, and not something a human needs to act on: the account ran out
+      // of usage window or the API is rate limiting, and both fix themselves with time. Same
+      // shape as `cancelled` - requeue rather than fail, unless a pull request already exists.
+      return hasOpenPull
+        ? {
+            target: 'merging',
+            reason:
+              'The run hit a Claude usage limit while working on an open pull request, which still stands.',
+          }
+        : {
+            target: 'open',
+            reason:
+              'The run hit a Claude usage limit before finishing, so the issue was requeued rather than marked failed.',
+          };
     case 'success':
       break;
     default:

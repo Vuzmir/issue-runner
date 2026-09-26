@@ -19,12 +19,19 @@ import type { WorkerTask } from './engine.js';
 import { install } from './install.js';
 import { updateNote } from './note.js';
 import { ensureNode } from './node.js';
-import { lineReader, linesFor, parseLine, type StreamEvent } from './transcript.js';
+import { isCapacityFailure, lineReader, linesFor, parseLine, type StreamEvent } from './transcript.js';
 import { USAGE_MARKER, addRun, lastRunFrom, parseTotals, usageNote, type Limits } from './usage.js';
 
-/** A runner account has no git identity of its own, and `git commit` refuses without one. */
-const GIT_NAME = 'issue-runner';
-const GIT_EMAIL = 'issue-runner@users.noreply.github.com';
+/** A runner account has no git identity of its own, and `git commit` refuses without one.
+ * Exported so a salvage commit made outside the worker's own session signs the same way. */
+export const GIT_NAME = 'issue-runner';
+export const GIT_EMAIL = 'issue-runner@users.noreply.github.com';
+
+/**
+ * Thrown instead of a plain `Error` when the CLI's exit is a Claude usage/rate limit rather
+ * than a real failure - so the caller can requeue the issue instead of marking it `failed`.
+ */
+export class UsageLimitError extends Error {}
 
 export interface WorkerParams {
   issue: number;
@@ -161,9 +168,11 @@ export async function runWorker(params: WorkerParams): Promise<void> {
 
   const written = path.join(stateDir, 'next-status');
   const status = fs.existsSync(written) ? fs.readFileSync(written, 'utf8').trim() : '';
+  const capacityFailure = code !== 0 && isCapacityFailure(result);
   // What the release step is about to do with this run, said in its own vocabulary: a run
-  // that died is `failed`, and one that wrote nothing parks at `blocked`.
-  const outcome = code !== 0 ? 'failed' : status === '' ? 'blocked' : status;
+  // that hit a usage limit is requeued rather than failed, a run that died some other way is
+  // `failed`, and one that wrote nothing parks at `blocked`.
+  const outcome = capacityFailure ? 'rate-limited' : code !== 0 ? 'failed' : status === '' ? 'blocked' : status;
 
   // A failed run is exactly the one whose cost you want to see, so this comes before the
   // exit code is acted on - and it is reported rather than thrown, because losing the note
@@ -179,6 +188,11 @@ export async function runWorker(params: WorkerParams): Promise<void> {
     }
   }
 
+  if (capacityFailure) {
+    throw new UsageLimitError(
+      `The Claude CLI hit a usage limit rather than failing: ${(result?.result ?? '').trim() || `exit ${code}`}`,
+    );
+  }
   if (code !== 0) throw new Error(`The Claude CLI exited with ${code}.`);
 
   // Not an error - the release step turns a missing outcome into status:blocked on purpose.

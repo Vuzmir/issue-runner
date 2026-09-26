@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { lineReader, linesFor, parseLine, summarize, type StreamEvent } from './transcript.js';
+import {
+  isCapacityFailure,
+  lineReader,
+  linesFor,
+  parseLine,
+  summarize,
+  type StreamEvent,
+} from './transcript.js';
 
 describe('summarize', () => {
   it('flattens a multi-line string onto one line', () => {
@@ -78,6 +85,66 @@ describe('linesFor', () => {
   it('says nothing about events that are not worth a line', () => {
     expect(linesFor({ type: 'rate_limit_event' })).toEqual([]);
     expect(linesFor({ type: 'system', subtype: 'compact_boundary' })).toEqual([]);
+  });
+});
+
+describe('isCapacityFailure', () => {
+  it('is false with no result event at all', () => {
+    expect(isCapacityFailure(undefined)).toBe(false);
+  });
+
+  it('is false for a clean success', () => {
+    expect(isCapacityFailure({ type: 'result', subtype: 'success', is_error: false })).toBe(false);
+  });
+
+  it('is false for a real failure that has nothing to do with capacity', () => {
+    expect(
+      isCapacityFailure({ type: 'result', subtype: 'success', is_error: true, result: 'fatal: some other crash' }),
+    ).toBe(false);
+  });
+
+  it('catches the account usage limit, reported with subtype misleadingly "success"', () => {
+    expect(
+      isCapacityFailure({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        result: 'Claude AI usage limit reached|1760000400',
+      }),
+    ).toBe(true);
+  });
+
+  it('catches a per-request API rate limit or overload, by the CLI\'s own known-misleading prose', () => {
+    expect(
+      isCapacityFailure({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Rate limit reached' }),
+    ).toBe(true);
+    expect(
+      isCapacityFailure({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: Overloaded' }),
+    ).toBe(true);
+  });
+
+  it('catches a retryable status via terminal_reason, even with no matching prose', () => {
+    expect(
+      isCapacityFailure({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        terminal_reason: 'api_error',
+        api_error_status: 429,
+      }),
+    ).toBe(true);
+  });
+
+  it('is false for a non-retryable api_error, like the account losing access outright', () => {
+    expect(
+      isCapacityFailure({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        terminal_reason: 'api_error',
+        api_error_status: 403,
+      }),
+    ).toBe(false);
   });
 });
 

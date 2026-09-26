@@ -19735,10 +19735,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
     exports2.error = error2;
-    function warning5(message, properties = {}) {
+    function warning6(message, properties = {}) {
       (0, command_1.issueCommand)("warning", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
-    exports2.warning = warning5;
+    exports2.warning = warning6;
     function notice4(message, properties = {}) {
       (0, command_1.issueCommand)("notice", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -44568,7 +44568,7 @@ var require_github = __commonJS({
 // src/main.ts
 var fs7 = __toESM(require("node:fs"));
 var path10 = __toESM(require("node:path"));
-var core7 = __toESM(require_core());
+var core8 = __toESM(require_core());
 
 // src/claude.ts
 var import_node_child_process = require("node:child_process");
@@ -47093,6 +47093,15 @@ async function ensureNode(requested) {
 
 // src/transcript.ts
 var SUMMARY_LENGTH = 200;
+var RETRYABLE_API_STATUSES = /* @__PURE__ */ new Set([429, 503, 529]);
+function isCapacityFailure(event) {
+  if (event === void 0 || event.type !== "result" || event.is_error !== true) return false;
+  if (event.terminal_reason === "api_error" && RETRYABLE_API_STATUSES.has(event.api_error_status ?? 0)) {
+    return true;
+  }
+  const text = event.result ?? "";
+  return /^Claude AI usage limit reached\b/i.test(text) || /^API Error: (Rate limit reached|Overloaded)\b/i.test(text);
+}
 function summarize(value) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const flat = (text ?? "").replace(/\s+/g, " ").trim();
@@ -47246,6 +47255,8 @@ function usageNote(totals, last) {
 // src/claude.ts
 var GIT_NAME = "issue-runner";
 var GIT_EMAIL = "issue-runner@users.noreply.github.com";
+var UsageLimitError = class extends Error {
+};
 async function runWorker(params) {
   const { issue: issue2, task, model, githubToken, claudeToken } = params;
   const stateDir = params.stateDir.replace(/\\/g, "/");
@@ -47337,7 +47348,8 @@ async function runWorker(params) {
   });
   const written = path7.join(stateDir, "next-status");
   const status = fs5.existsSync(written) ? fs5.readFileSync(written, "utf8").trim() : "";
-  const outcome = code !== 0 ? "failed" : status === "" ? "blocked" : status;
+  const capacityFailure = code !== 0 && isCapacityFailure(result);
+  const outcome = capacityFailure ? "rate-limited" : code !== 0 ? "failed" : status === "" ? "blocked" : status;
   if (result !== void 0) {
     const session = result;
     try {
@@ -47351,15 +47363,50 @@ async function runWorker(params) {
       core3.warning(`Could not update the usage note on #${issue2}: ${error2 instanceof Error ? error2.message : error2}`);
     }
   }
+  if (capacityFailure) {
+    throw new UsageLimitError(
+      `The Claude CLI hit a usage limit rather than failing: ${(result?.result ?? "").trim() || `exit ${code}`}`
+    );
+  }
   if (code !== 0) throw new Error(`The Claude CLI exited with ${code}.`);
   if (status === "") core3.warning("The worker wrote no next-status; the issue will park at blocked.");
   else core3.notice(`#${issue2} -> ${status}`);
 }
 
-// src/config.ts
-var path8 = __toESM(require("node:path"));
+// src/salvage.ts
+var import_node_child_process2 = require("node:child_process");
+var core5 = __toESM(require_core());
+
+// src/gateway.ts
 var core4 = __toESM(require_core());
 var import_github2 = __toESM(require_github());
+
+// src/model.ts
+var MODEL_LABEL_DEFINITIONS = {
+  "opus5.5": { color: "5319E7", description: "Work this issue with Claude Opus 5.5" },
+  "opus5.0": { color: "5319E7", description: "Work this issue with Claude Opus 5" },
+  "opus4.8": { color: "5319E7", description: "Work this issue with Claude Opus 4.8" },
+  "haiku4.5": { color: "C5DEF5", description: "Work this issue with Claude Haiku 4.5" }
+};
+function expandModel(name) {
+  const short = /^([a-z]+)-?(\d+)(?:\.(\d+))?$/i.exec(name);
+  if (short === null) return name;
+  const [, family, major, minor] = short;
+  const version = minor === void 0 || minor === "0" ? major : `${major}-${minor}`;
+  return `claude-${family?.toLowerCase()}-${version}`;
+}
+function chooseModel(labels, prefix, fallback) {
+  const matching = labels.filter(
+    (label2) => label2.startsWith(prefix) && label2.slice(prefix.length).trim() !== ""
+  );
+  const label = matching[0];
+  if (label === void 0) return { model: fallback, label: void 0, warning: void 0 };
+  return {
+    model: expandModel(label.slice(prefix.length).trim()),
+    label,
+    warning: matching.length > 1 ? `carries ${matching.map((name) => `\`${name}\``).join(", ")}; using \`${label}\`` : void 0
+  };
+}
 
 // src/statuses.ts
 var STATUS_NAMES = ["open", "processing", "merging", "blocked", "failed", "done"];
@@ -47399,91 +47446,6 @@ var StatusLabels = class {
     return this.on(labels).some((status) => BUSY_STATUSES.includes(status));
   }
 };
-
-// src/config.ts
-function booleanInput(name, fallback) {
-  const raw = core4.getInput(name).trim().toLowerCase();
-  if (raw === "") return fallback;
-  if (raw === "false") return false;
-  if (raw === "true") return true;
-  throw new Error(`Input '${name}' must be true or false, got '${raw}'.`);
-}
-function optionalNumber(name) {
-  const raw = core4.getInput(name).trim();
-  if (raw === "") return void 0;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`Input '${name}' must be a positive integer, got '${raw}'.`);
-  }
-  return value;
-}
-function readConfig() {
-  const prefix = core4.getInput("label-prefix").trim() || "status:";
-  const staleLockMinutes = optionalNumber("stale-lock-minutes") ?? 120;
-  const maxFixAttempts = optionalNumber("max-fix-attempts") ?? 3;
-  const runnerTemp = process.env["RUNNER_TEMP"] ?? process.env["TMPDIR"] ?? ".";
-  const stateDir = core4.getInput("state-dir").trim() || path8.join(runnerTemp, "issue-runner");
-  const runId = process.env["GITHUB_RUN_ID"] ?? "local";
-  const server = process.env["GITHUB_SERVER_URL"] ?? "https://github.com";
-  const { owner, repo } = import_github2.context.repo;
-  return {
-    token: core4.getInput("token", { required: true }),
-    owner,
-    repo,
-    labels: new StatusLabels(prefix),
-    staleLockMinutes,
-    maxFixAttempts,
-    followReviews: booleanInput("follow-reviews", true),
-    dryRun: booleanInput("dry-run", false),
-    forceIssue: optionalNumber("force-issue"),
-    stateDir,
-    runId,
-    runUrl: `${server}/${owner}/${repo}/actions/runs/${runId}`,
-    model: core4.getInput("model", { required: true }),
-    modelLabelPrefix: core4.getInput("model-label-prefix").trim() || "model:",
-    claudeVersion: core4.getInput("version", { required: true }),
-    nodeVersion: core4.getInput("node-version", { required: true }),
-    claudeToken: core4.getInput("claude-token"),
-    // Not required here: an idle or busy tick never touches it, and should not need the
-    // secret configured to run at all. `runWorker` requires it once an issue is claimed.
-    githubToken: core4.getInput("github-token")
-  };
-}
-function issueUrl(config, issue2) {
-  const server = process.env["GITHUB_SERVER_URL"] ?? "https://github.com";
-  return `${server}/${config.owner}/${config.repo}/issues/${issue2}`;
-}
-
-// src/gateway.ts
-var core5 = __toESM(require_core());
-var import_github3 = __toESM(require_github());
-
-// src/model.ts
-var MODEL_LABEL_DEFINITIONS = {
-  "opus5.5": { color: "5319E7", description: "Work this issue with Claude Opus 5.5" },
-  "opus5.0": { color: "5319E7", description: "Work this issue with Claude Opus 5" },
-  "opus4.8": { color: "5319E7", description: "Work this issue with Claude Opus 4.8" },
-  "haiku4.5": { color: "C5DEF5", description: "Work this issue with Claude Haiku 4.5" }
-};
-function expandModel(name) {
-  const short = /^([a-z]+)-?(\d+)(?:\.(\d+))?$/i.exec(name);
-  if (short === null) return name;
-  const [, family, major, minor] = short;
-  const version = minor === void 0 || minor === "0" ? major : `${major}-${minor}`;
-  return `claude-${family?.toLowerCase()}-${version}`;
-}
-function chooseModel(labels, prefix, fallback) {
-  const matching = labels.filter(
-    (label2) => label2.startsWith(prefix) && label2.slice(prefix.length).trim() !== ""
-  );
-  const label = matching[0];
-  if (label === void 0) return { model: fallback, label: void 0, warning: void 0 };
-  return {
-    model: expandModel(label.slice(prefix.length).trim()),
-    label,
-    warning: matching.length > 1 ? `carries ${matching.map((name) => `\`${name}\``).join(", ")}; using \`${label}\`` : void 0
-  };
-}
 
 // src/gateway.ts
 var FAILING_CONCLUSIONS = /* @__PURE__ */ new Set(["failure", "timed_out", "action_required"]);
@@ -47525,7 +47487,7 @@ async function withRetry(what, call) {
     } catch (error2) {
       if (attempt >= attempts || !isRetryable(error2)) throw error2;
       const delay = 1e3 * 2 ** (attempt - 1);
-      core5.warning(`${what} failed (attempt ${attempt}/${attempts}), retrying in ${delay}ms`);
+      core4.warning(`${what} failed (attempt ${attempt}/${attempts}), retrying in ${delay}ms`);
       await sleep(delay);
     }
   }
@@ -47542,7 +47504,7 @@ var GitHubGateway = class {
   modelLabelPrefix;
   dryRun;
   constructor(config) {
-    this.api = (0, import_github3.getOctokit)(config.token);
+    this.api = (0, import_github2.getOctokit)(config.token);
     this.owner = config.owner;
     this.repo = config.repo;
     this.labels = config.labels;
@@ -47554,7 +47516,7 @@ var GitHubGateway = class {
   }
   skip(description) {
     if (this.dryRun) {
-      core5.info(`dry-run: skipping ${description}`);
+      core4.info(`dry-run: skipping ${description}`);
       return true;
     }
     return false;
@@ -47570,7 +47532,7 @@ var GitHubGateway = class {
       if (present.has(name)) continue;
       if (this.skip(`creating label ${name}`)) continue;
       const definition = STATUS_DEFINITIONS[status];
-      core5.info(`creating missing label: ${name}`);
+      core4.info(`creating missing label: ${name}`);
       await withRetry(
         `create label ${name}`,
         () => this.api.rest.issues.createLabel({
@@ -47585,7 +47547,7 @@ var GitHubGateway = class {
       const name = `${this.modelLabelPrefix}${short}`;
       if (present.has(name)) continue;
       if (this.skip(`creating label ${name}`)) continue;
-      core5.info(`creating missing label: ${name}`);
+      core4.info(`creating missing label: ${name}`);
       await withRetry(
         `create label ${name}`,
         () => this.api.rest.issues.createLabel({
@@ -47623,7 +47585,7 @@ var GitHubGateway = class {
     const stale = this.labels.on(current).map((status) => this.labels.name(status)).filter((name) => name !== target);
     const alreadyThere = current.includes(target);
     if (stale.length === 0 && alreadyThere) {
-      core5.info(`#${issue2} already at ${target}`);
+      core4.info(`#${issue2} already at ${target}`);
       return;
     }
     if (this.skip(`moving #${issue2} to ${target}`)) return;
@@ -47639,7 +47601,7 @@ var GitHubGateway = class {
         () => this.api.rest.issues.addLabels({ ...this.base, issue_number: issue2, labels: [target] })
       );
     }
-    core5.info(`#${issue2} -> ${target}`);
+    core4.info(`#${issue2} -> ${target}`);
   }
   async addComment(issue2, body) {
     if (this.skip(`commenting on #${issue2}`)) return;
@@ -47793,7 +47755,7 @@ ${log}`);
         }
       }
     } catch (error2) {
-      core5.warning(`Could not collect failing job logs: ${String(error2)}`);
+      core4.warning(`Could not collect failing job logs: ${String(error2)}`);
     }
     return parts.join("\n\n");
   }
@@ -47893,9 +47855,175 @@ ${log}`);
     );
   }
 };
+async function openPullRequest(githubToken, owner, repo, params) {
+  const api = (0, import_github2.getOctokit)(githubToken);
+  const { data } = await withRetry(
+    `open pull request for ${params.head}`,
+    () => api.rest.pulls.create({
+      owner,
+      repo,
+      title: params.title,
+      body: params.body,
+      head: params.head,
+      base: params.base,
+      draft: params.draft ?? false
+    })
+  );
+  return {
+    number: data.number,
+    state: data.merged_at !== null ? "MERGED" : data.state === "closed" ? "CLOSED" : "OPEN",
+    draft: data.draft ?? false,
+    headSha: data.head.sha,
+    headRef: data.head.ref,
+    createdAt: data.created_at,
+    url: data.html_url
+  };
+}
+
+// src/salvage.ts
+function branchNameFor(issueNumber) {
+  return `issue/${issueNumber}-usage-limit`;
+}
+function salvageCommitMessage(issue2) {
+  return `WIP: ${issue2.title}
+
+Interrupted partway through by a Claude usage limit. Refs #${issue2.number}`;
+}
+function why(reason) {
+  return ["<details><summary>Why the run stopped</summary>", "", "```", reason, "```", "", "</details>"].join("\n");
+}
+function salvagePullRequestBody(issue2, reason) {
+  return [
+    `Partial work on #${issue2.number}, committed by \`issue-runner\` after Claude hit a usage limit mid-run.`,
+    "",
+    "**This change is incomplete.** Mark it ready for review once you have checked it over and finished what it is missing, or close it and relabel the issue `status:open` to let the runner start over once the limit resets.",
+    "",
+    why(reason)
+  ].join("\n");
+}
+function salvageFollowUpComment(reason) {
+  return [
+    "`issue-runner` committed the work in progress here after Claude hit a usage limit mid-run. This push is **incomplete** - review it before merging.",
+    "",
+    why(reason)
+  ].join("\n");
+}
+function git(args, cwd, env) {
+  return (0, import_node_child_process2.execFileSync)("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+function currentBranch(cwd) {
+  try {
+    return git(["rev-parse", "--abbrev-ref", "HEAD"], cwd, process.env).trim();
+  } catch {
+    return "";
+  }
+}
+var NOTHING2 = { committed: false };
+async function salvagePartialWork(gateway, ctx, openPull = openPullRequest) {
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: GIT_NAME,
+    GIT_AUTHOR_EMAIL: GIT_EMAIL,
+    GIT_COMMITTER_NAME: GIT_NAME,
+    GIT_COMMITTER_EMAIL: GIT_EMAIL
+  };
+  try {
+    if (git(["status", "--porcelain"], ctx.cwd, env).trim() === "") return NOTHING2;
+    const branchNow = currentBranch(ctx.cwd);
+    if (ctx.task !== "implement") {
+      const pull2 = ctx.existingPull;
+      if (pull2 === void 0 || branchNow !== pull2.headRef) {
+        core5.warning(
+          `#${ctx.issue.number}: uncommitted changes exist but the workspace is not on the pull request's branch (on ${branchNow}); leaving them uncommitted rather than guessing.`
+        );
+        return NOTHING2;
+      }
+      git(["add", "-A"], ctx.cwd, env);
+      git(["commit", "-m", salvageCommitMessage(ctx.issue)], ctx.cwd, env);
+      git(["push", "origin", `HEAD:${pull2.headRef}`], ctx.cwd, env);
+      await gateway.addComment(pull2.number, salvageFollowUpComment(ctx.reason));
+      return { committed: true };
+    }
+    const branch = branchNow === ctx.initialBranch ? branchNameFor(ctx.issue.number) : branchNow;
+    if (branch !== branchNow) git(["switch", "-c", branch], ctx.cwd, env);
+    git(["add", "-A"], ctx.cwd, env);
+    git(["commit", "-m", salvageCommitMessage(ctx.issue)], ctx.cwd, env);
+    git(["push", "-u", "origin", branch], ctx.cwd, env);
+    const pull = await openPull(ctx.githubToken, ctx.owner, ctx.repo, {
+      title: `WIP: ${ctx.issue.title}`,
+      body: salvagePullRequestBody(ctx.issue, ctx.reason),
+      head: branch,
+      base: ctx.initialBranch,
+      draft: true
+    });
+    return { committed: true, pull: { number: pull.number } };
+  } catch (error2) {
+    core5.warning(
+      `#${ctx.issue.number}: could not salvage the interrupted run's changes: ` + (error2 instanceof Error ? error2.message : String(error2))
+    );
+    return NOTHING2;
+  }
+}
+
+// src/config.ts
+var path8 = __toESM(require("node:path"));
+var core6 = __toESM(require_core());
+var import_github3 = __toESM(require_github());
+function booleanInput(name, fallback) {
+  const raw = core6.getInput(name).trim().toLowerCase();
+  if (raw === "") return fallback;
+  if (raw === "false") return false;
+  if (raw === "true") return true;
+  throw new Error(`Input '${name}' must be true or false, got '${raw}'.`);
+}
+function optionalNumber(name) {
+  const raw = core6.getInput(name).trim();
+  if (raw === "") return void 0;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`Input '${name}' must be a positive integer, got '${raw}'.`);
+  }
+  return value;
+}
+function readConfig() {
+  const prefix = core6.getInput("label-prefix").trim() || "status:";
+  const staleLockMinutes = optionalNumber("stale-lock-minutes") ?? 120;
+  const maxFixAttempts = optionalNumber("max-fix-attempts") ?? 3;
+  const runnerTemp = process.env["RUNNER_TEMP"] ?? process.env["TMPDIR"] ?? ".";
+  const stateDir = core6.getInput("state-dir").trim() || path8.join(runnerTemp, "issue-runner");
+  const runId = process.env["GITHUB_RUN_ID"] ?? "local";
+  const server = process.env["GITHUB_SERVER_URL"] ?? "https://github.com";
+  const { owner, repo } = import_github3.context.repo;
+  return {
+    token: core6.getInput("token", { required: true }),
+    owner,
+    repo,
+    labels: new StatusLabels(prefix),
+    staleLockMinutes,
+    maxFixAttempts,
+    followReviews: booleanInput("follow-reviews", true),
+    dryRun: booleanInput("dry-run", false),
+    forceIssue: optionalNumber("force-issue"),
+    stateDir,
+    runId,
+    runUrl: `${server}/${owner}/${repo}/actions/runs/${runId}`,
+    model: core6.getInput("model", { required: true }),
+    modelLabelPrefix: core6.getInput("model-label-prefix").trim() || "model:",
+    claudeVersion: core6.getInput("version", { required: true }),
+    nodeVersion: core6.getInput("node-version", { required: true }),
+    claudeToken: core6.getInput("claude-token"),
+    // Not required here: an idle or busy tick never touches it, and should not need the
+    // secret configured to run at all. `runWorker` requires it once an issue is claimed.
+    githubToken: core6.getInput("github-token")
+  };
+}
+function issueUrl(config, issue2) {
+  const server = process.env["GITHUB_SERVER_URL"] ?? "https://github.com";
+  return `${server}/${config.owner}/${config.repo}/issues/${issue2}`;
+}
 
 // src/engine.ts
-var core6 = __toESM(require_core());
+var core7 = __toESM(require_core());
 var LOCK_MARKER = "<!-- issue-runner:lock";
 var PR_MARKER = "<!-- issue-runner:pr";
 var LOCK_RUN_PATTERN = /issue-runner:lock run=([0-9A-Za-z_-]+)/;
@@ -47966,6 +48094,14 @@ function resolveRelease(jobStatus, declared, hasOpenPull = false) {
         target: "failed",
         reason: "The run failed. Fix the cause and relabel it queued to retry."
       };
+    case "rate-limited":
+      return hasOpenPull ? {
+        target: "merging",
+        reason: "The run hit a Claude usage limit while working on an open pull request, which still stands."
+      } : {
+        target: "open",
+        reason: "The run hit a Claude usage limit before finishing, so the issue was requeued rather than marked failed."
+      };
     case "success":
       break;
     default:
@@ -48001,21 +48137,21 @@ async function lockIsStale(gateway, issue2, ctx) {
   const body = await gateway.findLastMarkerComment(issue2.number, LOCK_MARKER);
   const lockRunId = parseLockRunId(body);
   if (lockRunId !== void 0 && lockRunId === ctx.runId) {
-    core6.info(`#${issue2.number} is locked by this very run`);
+    core7.info(`#${issue2.number} is locked by this very run`);
     return false;
   }
   if (lockRunId !== void 0) {
     const status = await gateway.workflowRunStatus(lockRunId);
     if (ALIVE_RUN_STATUSES.has(status)) {
-      core6.info(`#${issue2.number} locked by run ${lockRunId} which is still ${status}`);
+      core7.info(`#${issue2.number} locked by run ${lockRunId} which is still ${status}`);
       return false;
     }
-    core6.info(`#${issue2.number} locked by run ${lockRunId} which is ${status}`);
+    core7.info(`#${issue2.number} locked by run ${lockRunId} which is ${status}`);
     return true;
   }
   const appliedAt = await gateway.labelAppliedAt(issue2.number, ctx.labels.name("processing")) ?? new Date(issue2.updatedAt);
   const heldMinutes = Math.floor((ctx.now.getTime() - appliedAt.getTime()) / 6e4);
-  core6.info(
+  core7.info(
     `#${issue2.number} has no lock comment; held for ${heldMinutes}m (limit ${ctx.staleLockMinutes}m)`
   );
   return heldMinutes >= ctx.staleLockMinutes;
@@ -48034,7 +48170,7 @@ async function reapStaleLocks(gateway, issues, ctx) {
   for (const issue2 of issuesWith(issues, ctx.labels, "processing")) {
     if (!await lockIsStale(gateway, issue2, ctx)) continue;
     const target = await reclaimTarget(gateway, issue2);
-    core6.warning(`Reclaiming stale lock on #${issue2.number} back to ${ctx.labels.name(target)}`);
+    core7.warning(`Reclaiming stale lock on #${issue2.number} back to ${ctx.labels.name(target)}`);
     await gateway.setStatus(issue2.number, issue2.labels, ctx.labels.name(target));
     await gateway.addComment(
       issue2.number,
@@ -48051,18 +48187,18 @@ async function followMerging(gateway, issues, ctx) {
   for (const issue2 of issuesWith(issues, ctx.labels, "merging")) {
     const marker = parsePullMarker(await gateway.findLastMarkerComment(issue2.number, PR_MARKER));
     if (marker === void 0) {
-      core6.info(`#${issue2.number} is merging but has no recorded pull request; leaving it alone`);
+      core7.info(`#${issue2.number} is merging but has no recorded pull request; leaving it alone`);
       continue;
     }
     const pull = await gateway.getPullRequest(marker.pull);
     if (pull === void 0) {
-      core6.warning(`#${issue2.number}: PR #${marker.pull} no longer exists`);
+      core7.warning(`#${issue2.number}: PR #${marker.pull} no longer exists`);
       await park(gateway, issue2, ctx, `PR #${marker.pull} no longer exists.`);
       advanced++;
       continue;
     }
     if (pull.state === "MERGED") {
-      core6.notice(`#${issue2.number}: PR #${pull.number} merged, closing issue`);
+      core7.notice(`#${issue2.number}: PR #${pull.number} merged, closing issue`);
       await gateway.setStatus(issue2.number, issue2.labels, ctx.labels.name("done"));
       await gateway.addComment(
         issue2.number,
@@ -48073,19 +48209,19 @@ async function followMerging(gateway, issues, ctx) {
       continue;
     }
     if (pull.state === "CLOSED") {
-      core6.warning(`#${issue2.number}: PR #${pull.number} was closed without merging`);
+      core7.warning(`#${issue2.number}: PR #${pull.number} was closed without merging`);
       await park(gateway, issue2, ctx, `PR #${pull.number} was closed without merging.`);
       advanced++;
       continue;
     }
     if (pull.draft) {
-      core6.info(`#${issue2.number}: PR #${pull.number} is a draft; waiting`);
+      core7.info(`#${issue2.number}: PR #${pull.number} is a draft; waiting`);
       continue;
     }
     if (followUp !== void 0) continue;
     const comments = ctx.followReviews ? await gateway.humanCommentsSince(pull.number, marker.seen ?? pull.createdAt) : [];
     const checks = await gateway.checksFor(pull.headSha);
-    core6.info(
+    core7.info(
       `#${issue2.number}: PR #${pull.number} checks are ${checks.verdict}, ${comments.length} unanswered comment(s)` + // The one case where "none" does not mean "nobody said anything": a review left in
       // draft is visible to its author in the UI and to nobody else, the API included. It
       // looks like a reviewed pull request and reads to the runner as an untouched one.
@@ -48109,7 +48245,7 @@ async function followMerging(gateway, issues, ctx) {
     }
     if (checks.verdict !== "failing") continue;
     if (marker.sha === pull.headSha) {
-      core6.warning(`#${issue2.number}: PR #${pull.number} is still red on ${pull.headSha}`);
+      core7.warning(`#${issue2.number}: PR #${pull.number} is still red on ${pull.headSha}`);
       await park(
         gateway,
         issue2,
@@ -48120,7 +48256,7 @@ async function followMerging(gateway, issues, ctx) {
       continue;
     }
     if (marker.attempt >= ctx.maxFixAttempts) {
-      core6.warning(`#${issue2.number}: PR #${pull.number} hit the fix attempt limit`);
+      core7.warning(`#${issue2.number}: PR #${pull.number} hit the fix attempt limit`);
       await park(
         gateway,
         issue2,
@@ -48142,11 +48278,11 @@ async function followMerging(gateway, issues, ctx) {
   }
   return { advanced, followUp };
 }
-async function park(gateway, issue2, ctx, why) {
+async function park(gateway, issue2, ctx, why2) {
   await gateway.setStatus(issue2.number, issue2.labels, ctx.labels.name("blocked"));
   await gateway.addComment(
     issue2.number,
-    `${why} \`issue-runner\` marked this \`${ctx.labels.name("blocked")}\`; relabel it \`${ctx.labels.name("open")}\` to requeue.`
+    `${why2} \`issue-runner\` marked this \`${ctx.labels.name("blocked")}\`; relabel it \`${ctx.labels.name("open")}\` to requeue.`
   );
 }
 
@@ -48199,6 +48335,10 @@ function readStateFile(config, name) {
   if (!fs7.existsSync(file)) return void 0;
   return fs7.readFileSync(file, "utf8").trim();
 }
+function writeStateFile(config, name, value) {
+  fs7.mkdirSync(config.stateDir, { recursive: true });
+  fs7.writeFileSync(path10.join(config.stateDir, name), value);
+}
 function link(config, issue2) {
   return `[#${issue2.number}](${issueUrl(config, issue2.number)}) ${issue2.title}`;
 }
@@ -48214,7 +48354,7 @@ async function claim(config, gateway) {
   if (sweep.followUp !== void 0) {
     const inFlight = issuesWith(issues, config.labels, "processing");
     if (inFlight.length > 0) {
-      core7.info(`#${inFlight[0]?.number} is still processing; deferring the pull request follow-up`);
+      core8.info(`#${inFlight[0]?.number} is still processing; deferring the pull request follow-up`);
     } else {
       await take(config, gateway, ctx, sweep.followUp.issue, sweep.followUp);
       return;
@@ -48225,10 +48365,10 @@ async function claim(config, gateway) {
   }
   const decision = decide(issues, config.labels, config.forceIssue);
   if (decision.kind === "busy") {
-    core7.setOutput("decision", "busy");
-    core7.setOutput("issue", "");
-    core7.notice("Queue is busy; no work started.");
-    core7.summary.addHeading("issue-runner: busy", 3).addTable([
+    core8.setOutput("decision", "busy");
+    core8.setOutput("issue", "");
+    core8.notice("Queue is busy; no work started.");
+    core8.summary.addHeading("issue-runner: busy", 3).addTable([
       [
         { data: "issue", header: true },
         { data: "status", header: true }
@@ -48238,23 +48378,23 @@ async function claim(config, gateway) {
         config.labels.on(issue2.labels).map((status) => `\`${config.labels.name(status)}\``).join(", ")
       ])
     ]);
-    await core7.summary.write();
+    await core8.summary.write();
     return;
   }
   if (decision.kind === "idle") {
     if (config.forceIssue !== void 0) {
       throw new Error(`Issue #${config.forceIssue} is not open, so it cannot be claimed.`);
     }
-    core7.setOutput("decision", "idle");
-    core7.setOutput("issue", "");
-    core7.notice(`Nothing labelled ${config.labels.name("open")}; idling.`);
-    core7.summary.addHeading("issue-runner: idle", 3).addRaw(`No issue carries \`${config.labels.name("open")}\`, so no work was started.`);
-    await core7.summary.write();
+    core8.setOutput("decision", "idle");
+    core8.setOutput("issue", "");
+    core8.notice(`Nothing labelled ${config.labels.name("open")}; idling.`);
+    core8.summary.addHeading("issue-runner: idle", 3).addRaw(`No issue carries \`${config.labels.name("open")}\`, so no work was started.`);
+    await core8.summary.write();
     return;
   }
   const openPull = await findOpenPull(gateway, decision.issue);
   if (openPull !== void 0) {
-    core7.warning(
+    core8.warning(
       `#${decision.issue.number} is labelled open but PR #${openPull.number} is already open for it; moving it to merging and running its sweep in the same tick`
     );
     await gateway.setStatus(
@@ -48278,11 +48418,11 @@ async function claim(config, gateway) {
       await take(config, gateway, ctx, resweep.followUp.issue, resweep.followUp);
       return;
     }
-    core7.setOutput("decision", "idle");
-    core7.setOutput("issue", "");
-    core7.notice(`#${decision.issue.number} redirected to its pull request; no fresh implementation started.`);
-    core7.summary.addHeading("issue-runner: redirected", 3).addRaw(`${link(config, decision.issue)} already has PR #${openPull.number} open.`);
-    await core7.summary.write();
+    core8.setOutput("decision", "idle");
+    core8.setOutput("issue", "");
+    core8.notice(`#${decision.issue.number} redirected to its pull request; no fresh implementation started.`);
+    core8.summary.addHeading("issue-runner: redirected", 3).addRaw(`${link(config, decision.issue)} already has PR #${openPull.number} open.`);
+    await core8.summary.write();
     return;
   }
   await take(config, gateway, ctx, decision.issue);
@@ -48315,17 +48455,19 @@ Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}]
   publishWorkerInput(config.stateDir, issue2, protocolSource(), priorComments, input);
   const task = input?.task ?? "implement";
   const model = chooseModel(issue2.labels, config.modelLabelPrefix, config.model);
-  if (model.warning !== void 0) core7.warning(`#${issue2.number} ${model.warning}`);
-  if (model.label !== void 0) core7.info(`#${issue2.number} is labelled \`${model.label}\`; using ${model.model}`);
-  core7.setOutput("decision", "claimed");
-  core7.setOutput("issue", String(issue2.number));
-  core7.setOutput("title", issue2.title);
-  core7.setOutput("task", task);
-  core7.setOutput("pull", followUp === void 0 ? "" : String(followUp.pull.number));
-  core7.notice(`Claimed #${issue2.number} (${task}): ${issue2.title}`);
-  core7.summary.addHeading(`issue-runner: claimed #${issue2.number} (${task})`, 3).addRaw(link(config, issue2));
-  await core7.summary.write();
+  if (model.warning !== void 0) core8.warning(`#${issue2.number} ${model.warning}`);
+  if (model.label !== void 0) core8.info(`#${issue2.number} is labelled \`${model.label}\`; using ${model.model}`);
+  core8.setOutput("decision", "claimed");
+  core8.setOutput("issue", String(issue2.number));
+  core8.setOutput("title", issue2.title);
+  core8.setOutput("task", task);
+  core8.setOutput("pull", followUp === void 0 ? "" : String(followUp.pull.number));
+  core8.notice(`Claimed #${issue2.number} (${task}): ${issue2.title}`);
+  core8.summary.addHeading(`issue-runner: claimed #${issue2.number} (${task})`, 3).addRaw(link(config, issue2));
+  await core8.summary.write();
   let jobStatus = "success";
+  const workspace = process.env["GITHUB_WORKSPACE"] ?? process.cwd();
+  const initialBranch = currentBranch(workspace);
   try {
     await runWorker({
       issue: issue2.number,
@@ -48338,12 +48480,32 @@ Claimed by \`issue-runner\` at ${ctx.now.toISOString()} - [run #${config.runId}]
       stateDir: config.stateDir
     });
   } catch (error2) {
-    jobStatus = "failure";
-    core7.error(error2 instanceof Error ? error2.message : String(error2));
+    if (error2 instanceof UsageLimitError) {
+      jobStatus = "rate-limited";
+      core8.warning(error2.message);
+      const salvage = await salvagePartialWork(gateway, {
+        cwd: workspace,
+        issue: issue2,
+        task,
+        initialBranch,
+        existingPull: followUp === void 0 ? void 0 : { number: followUp.pull.number, headRef: followUp.pull.headRef },
+        reason: error2.message,
+        owner: config.owner,
+        repo: config.repo,
+        githubToken: config.githubToken
+      });
+      if (salvage.pull !== void 0) {
+        writeStateFile(config, "next-status", "merging");
+        writeStateFile(config, "pr", String(salvage.pull.number));
+      }
+    } else {
+      jobStatus = "failure";
+      core8.error(error2 instanceof Error ? error2.message : String(error2));
+    }
   }
   await release(config, gateway, issue2.number, jobStatus);
   if (jobStatus === "failure") {
-    core7.setFailed(`Working #${issue2.number} failed.`);
+    core8.setFailed(`Working #${issue2.number} failed.`);
   }
 }
 async function release(config, gateway, issueNumber, jobStatus) {
@@ -48357,7 +48519,7 @@ async function release(config, gateway, issueNumber, jobStatus) {
   const pullView = pullNumber === void 0 ? await findOpenPull(gateway, issue2) : await gateway.getPullRequest(pullNumber);
   const outcome = resolveRelease(jobStatus, declared, pullView?.state === "OPEN");
   if (outcome.warning !== void 0) {
-    core7.warning(`#${issueNumber}: ${outcome.warning}`);
+    core8.warning(`#${issueNumber}: ${outcome.warning}`);
   }
   const target = config.labels.name(outcome.target);
   await gateway.setStatus(issue2.number, issue2.labels, target);
@@ -48386,21 +48548,21 @@ async function release(config, gateway, issueNumber, jobStatus) {
   if (outcome.target === "done") {
     await gateway.closeIssue(issue2.number);
   }
-  core7.notice(`#${issue2.number} released as ${target}`);
-  core7.summary.addRaw(`
+  core8.notice(`#${issue2.number} released as ${target}`);
+  core8.summary.addRaw(`
 
 Released ${link(config, issue2)} as \`${target}\`.`);
-  await core7.summary.write();
+  await core8.summary.write();
 }
 async function run() {
   const config = readConfig();
-  core7.setOutput("state-dir", config.stateDir);
+  core8.setOutput("state-dir", config.stateDir);
   if (config.dryRun) {
-    core7.info("Running in dry-run mode: nothing is written back to GitHub.");
+    core8.info("Running in dry-run mode: nothing is written back to GitHub.");
   }
   const gateway = new GitHubGateway(config);
   await claim(config, gateway);
 }
 run().catch((error2) => {
-  core7.setFailed(error2 instanceof Error ? error2.message : String(error2));
+  core8.setFailed(error2 instanceof Error ? error2.message : String(error2));
 });

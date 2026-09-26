@@ -33,6 +33,14 @@ export interface PullView {
  */
 export type CheckVerdict = 'passing' | 'failing' | 'pending' | 'none';
 
+export interface NewPullRequest {
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  draft?: boolean;
+}
+
 export interface FailedCheck {
   name: string;
   conclusion: string;
@@ -567,4 +575,40 @@ export class GitHubGateway implements Gateway {
       }),
     );
   }
+}
+
+/**
+ * Opens a pull request with a token distinct from the gateway's own - the same token
+ * `runWorker` hands the CLI for `gh pr create`, and for the same reason: many repositories
+ * forbid Actions from opening pull requests with the default token, which is what
+ * `GitHubGateway` otherwise carries throughout. Only used to hand off a salvaged usage-limit
+ * run; a normal run always opens its own pull request inside the CLI's own session.
+ */
+export async function openPullRequest(
+  githubToken: string,
+  owner: string,
+  repo: string,
+  params: NewPullRequest,
+): Promise<PullView> {
+  const api = getOctokit(githubToken);
+  const { data } = await withRetry(`open pull request for ${params.head}`, () =>
+    api.rest.pulls.create({
+      owner,
+      repo,
+      title: params.title,
+      body: params.body,
+      head: params.head,
+      base: params.base,
+      draft: params.draft ?? false,
+    }),
+  );
+  return {
+    number: data.number,
+    state: data.merged_at !== null ? 'MERGED' : data.state === 'closed' ? 'CLOSED' : 'OPEN',
+    draft: data.draft ?? false,
+    headSha: data.head.sha,
+    headRef: data.head.ref,
+    createdAt: data.created_at,
+    url: data.html_url,
+  };
 }

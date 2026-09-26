@@ -253,11 +253,37 @@ Once Claude exits, the same run maps what happened onto a label - there is no se
 release step to guard with `if: always()`, since claiming, working and releasing all happen
 in the one action:
 
-- Claude's process failed to start or exited non-zero -> `status:failed`, or
+- Claude's process failed to start or exited non-zero for a real reason -> `status:failed`, or
   `status:merging` when a pull request is already open
+- it exited because Claude hit a usage/rate limit, not because of a bug -> `status:open` (a
+  plain requeue, not `status:failed`), or `status:merging` when a pull request is already open.
+  See [Usage limits are not failures](#usage-limits-are-not-failures) below
 - it exited cleanly -> whatever `next-status` says
 - it exited cleanly but wrote no `next-status` -> `status:blocked`, on purpose, so a
   misbehaving worker parks the queue instead of spinning on the same issue every hour
+
+### Usage limits are not failures
+
+The CLI is known to report an API-level rejection - the account's usage window exhausted, a
+per-request rate limit, the API overloaded - inconsistently: `subtype: "success"` alongside
+`is_error: true`, with the only truthful detail being the prose the CLI leaves in its `result`
+field (anthropics/claude-code#79500). None of that is a bug in the work, and none of it is
+something a human needs to act on - the account's window resets on its own - so treating it
+as a `status:failed` run would demand a person's attention for nothing they can fix any
+faster than waiting does.
+
+The runner reads `is_error`, the newer `terminal_reason`/`api_error_status` pair, and that
+prose to tell this apart from a real crash. When it matches, the run does not fail the job and
+does not mark the issue `status:failed`; it requeues the issue (or hands it back to
+`status:merging`, if a pull request is already open) so the next tick simply tries again.
+
+If the interrupted session had already made changes on disk, they are not thrown away: the
+runner commits whatever is sitting in the workspace, pushes it, and either adds a comment on
+the pull request that already existed (a follow-up task) or opens a new **draft** pull request
+for it (a fresh `implement` claim) - in both cases saying plainly that the change is
+incomplete because the run was cut off. A draft is deliberately left for a human to pick up:
+`followMerging` (see [Following an open pull request](#following-an-open-pull-request)) leaves
+drafts alone until one is marked ready.
 
 A run that is cancelled or killed outright gets no chance to release anything, so the issue
 stays at `status:processing`. That is not a stuck state: the next tick's stale-lock check
